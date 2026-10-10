@@ -201,8 +201,19 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .seat-who { flex: 1 1 110px; min-width: 0; }
 .seat-who strong { display: block; font-family: var(--f-display); font-weight: 400; font-size: 20px; line-height: 1.1; overflow-wrap: anywhere; }
 .seat-who small { font-family: var(--f-label); font-weight: 600; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-.seat .pick { flex: 1 1 190px; }
+.seat-act { flex: 1 1 190px; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.seat-act.has-swap { flex-basis: 310px; }
+.seat .pick { flex: 1 1 0; }
 .seat .pick h3 { font-size: 19px; }
+.seat .swap { flex: none; height: 36px; padding: 0 12px; border-radius: 10px; border: 2px solid var(--line); background: var(--paper); color: var(--ink); font-family: var(--f-label); font-weight: 700; font-size: 14px; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
+.seat .swap:hover { border-color: var(--ink); }
+.seat .swap .s { display: none; }
+.menu[data-d="2"] .seat .swap .l, .menu[data-d="3"] .seat .swap .l { display: none; }
+.menu[data-d="2"] .seat .swap .s, .menu[data-d="3"] .seat .swap .s { display: inline; }
+.menu[data-d="2"] .seat .swap, .menu[data-d="3"] .seat .swap { height: 30px; padding: 0 9px; font-size: 13px; }
+.menu[data-d="2"] .seat-act.has-swap, .menu[data-d="3"] .seat-act.has-swap { flex-basis: 170px; }
+.menu[data-d="2"] .seat-act.has-swap.has-arrows, .menu[data-d="3"] .seat-act.has-swap.has-arrows { flex-basis: 250px; }
+.menu[data-d="2"] .seat-act.has-swap .pick small { display: none; }
 @media (max-width: 720px) { .lb-seats { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------- Tutorial ---------- */
@@ -299,6 +310,11 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
   .menu table.keys th:nth-child(4), .menu table.keys td:nth-child(4) { display: none; }
   .menu .go p { display: none; }
   .menu .lb-seats .seat-who { flex-basis: 90px; }
+  .menu .seat .swap .l { display: none; }
+  .menu .seat .swap .s { display: inline; }
+  .menu .seat-act.has-swap { flex-basis: 170px; }
+  .menu .seat-act.has-swap.has-arrows { flex-basis: 250px; }
+  .menu .seat-act.has-swap .pick small { display: none; }
   .topic ul { font-size: 14px; }
 }
 /* Al máximo de compactación: la tabla de controles con la nota al lado y textos de ayuda más prietos */
@@ -413,7 +429,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
           <ul>
             <li>Quien crea la sala recibe un código de 4 letras y se lo pasa a sus amigos.</li>
             <li id="olStep">Ellos abren este mismo juego con su sesión de Claude, escriben el código y pulsan Unirse.</li>
-            <li>Cada uno elige personaje en la sala. Los huecos libres los juegan bots.</li>
+            <li>Cada uno elige personaje y equipo en la sala. Los huecos libres los juegan bots.</li>
             <li>El anfitrión lleva los bots y el marcador: debe dejar la pestaña a la vista.</li>
           </ul>
         </div>
@@ -2389,10 +2405,10 @@ if (typeof module !== 'undefined') module.exports = VB;
   /* ---------- Online ---------- */
   // Cada dispositivo simula su jugador y sus golpes; el anfitrión lleva además los bots y el marcador.
   // Todo viaja como «presencia» de la sala: mi jugador, mis últimos golpes y, el anfitrión, el estado del partido.
-  const CODE_ABC = 'abcdefghjkmnpqrstuvwxyz', SEAT_ORDER = [2, 1, 3];
+  const CODE_ABC = 'abcdefghjkmnpqrstuvwxyz', SEAT_ORDER = [2, 1, 3, 0];
   const net = { api: null, sala: null, unsub: null, busy: false, code: '', role: '', phase: '', mid: 0, sent: '', view: null, gone: {},
     seatPeer: [null, null, null, null], playSeats: [], ctrl: [], props: [], abs: [], abSeq: 0, head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0,
-    myIdx: -1, myChar: '', rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null, aheadT: 0 };
+    myIdx: -1, myChar: '', rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null, aheadT: 0, hostSeat: 0, hostIdx: 0, seenMv: {}, mvSeq: 0 };
   function cleanNick(s) { return String(s == null ? '' : s).replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 10); }
   const validChar = (id, def) => (CHARS.some(c => c.id === id) ? id : def || CHARS[0].id);
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -2459,9 +2475,10 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   function netEnter(sala, code, role) {
     Object.assign(net, { sala, code, role, phase: 'lobby', mid: 0, sent: '', view: null, gone: {}, seatPeer: [null, null, null, null], playSeats: [], ctrl: [],
-      props: [], abs: [], head: null, seenAb: {}, seenPl: {}, myIdx: -1, myChar: cfg.slots[0].char, rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null });
+      props: [], abs: [], head: null, seenAb: {}, seenPl: {}, myIdx: -1, myChar: cfg.slots[0].char, rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null,
+      hostSeat: 0, hostIdx: 0, seenMv: {}, mvSeq: 0 });
     net.unsub = sala.onPeers(() => {}, () => netLeave('Se perdió la conexión con la sala.'));
-    sala.presence({ v: 2, role, nick: cfg.nick, char: net.myChar, pl: {}, h: [], ab: [], ld: '', pt: 0 }).catch(() => {});
+    sala.presence({ v: 2, role, nick: cfg.nick, char: net.myChar, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
     endTut(); scene = 'lobby'; paused = false;
     $('#menu').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; $('#lobby').hidden = false; hud.hidden = true;
     segPaints.forEach(f => f()); renderLobby();
@@ -2478,7 +2495,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   function seatsInfo() {
     const mine = myPeer(), here = new Map(net.sala.peers().map(p => [p.peer, p]));
     return activeSlots().map(k => {
-      if (k === 0) return { k, peer: mine || 'h', nick: cfg.nick, char: cfg.slots[0].char };
+      if (k === net.hostSeat) return { k, peer: mine || 'h', nick: cfg.nick, char: validChar(net.myChar), host: 1 };
       const id = net.seatPeer[k], pr = id && here.get(id);
       if (!id || !pr) return { k, peer: '', nick: '', char: cfg.slots[k].char };
       return { k, peer: id, nick: cleanNick(pr.presence.nick) || 'Invitado', char: validChar(pr.presence.char, cfg.slots[k].char) };
@@ -2492,22 +2509,47 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
 
   /* --- Anfitrión --- */
+  // Sitios: el anfitrión ocupa hostSeat y los invitados seatPeer[k]; los demás huecos activos son bots
+  function seatFix(act) { // al pasar a 1 contra 1, el anfitrión se queda en un hueco que siga en juego
+    if (act.includes(net.hostSeat)) return;
+    const same = act.find(k => teamOf(k) === teamOf(net.hostSeat)), free = act.find(k => !net.seatPeer[k]);
+    net.hostSeat = !net.seatPeer[same] || free == null ? same : free;
+    net.seatPeer[net.hostSeat] = null;
+  }
+  function moveSeat(who, k) { // who: id del invitado, o '' si es el anfitrión. Si el hueco está ocupado, se cambian el sitio
+    if (!activeSlots().includes(k)) return;
+    const from = who ? net.seatPeer.indexOf(who) : net.hostSeat;
+    if (from === k) return;
+    const hostThere = net.hostSeat === k, occ = net.seatPeer[k];
+    if ((hostThere || occ) && from < 0) return; // quien mira solo puede ocupar huecos libres
+    if (who) { if (from >= 0) net.seatPeer[from] = null; net.seatPeer[k] = who; } else { net.hostSeat = k; net.seatPeer[k] = null; }
+    if (hostThere) net.hostSeat = from; else if (occ) net.seatPeer[from] = occ;
+  }
   function hostTick(dt) {
     const peers = net.sala.peers(), act = activeSlots(), here = new Set(peers.map(p => p.peer));
-    for (let k = 1; k < 4; k++) {
+    seatFix(act);
+    for (let k = 0; k < 4; k++) {
       const id = net.seatPeer[k];
       if (!id) continue;
       if (!act.includes(k)) { net.seatPeer[k] = null; continue; }
       if (here.has(id)) net.gone[id] = 0;
       else if ((net.gone[id] = (net.gone[id] || 0) + dt) > 5) net.seatPeer[k] = null; // margen para reconexiones breves
     }
+    for (const p of peers) { // peticiones de cambio de sitio: cada una se atiende una sola vez, y solo en la sala
+      if (p.sameTab || !p.presence || p.presence.role !== 'g') continue;
+      const mv = p.presence.mv;
+      if (!Array.isArray(mv)) { net.seenMv[p.peer] = 0; continue; }
+      if (!(mv[0] > (net.seenMv[p.peer] || 0))) continue;
+      net.seenMv[p.peer] = mv[0];
+      if (net.phase === 'lobby') moveSeat(p.peer, mv[1]);
+    }
     if (net.phase === 'lobby') for (const p of peers) {
       if (p.sameTab || !p.presence || p.presence.role !== 'g' || net.seatPeer.includes(p.peer)) continue;
-      const k = SEAT_ORDER.find(s => act.includes(s) && !net.seatPeer[s]);
+      const k = SEAT_ORDER.find(s => act.includes(s) && s !== net.hostSeat && !net.seatPeer[s]);
       if (k != null) net.seatPeer[k] = p.peer;
     }
     if (scene === 'play') net.playSeats.forEach((id, i) => { // quien se va deja su jugador a un bot
-      if (id && i > 0 && !net.seatPeer.includes(id)) { const p = game.players[i]; p.remote = false; p.isBot = true; p.control = 'bot'; labels[i] = 'BOT'; net.playSeats[i] = ''; net.ctrl[i] = ''; }
+      if (id && i !== net.hostIdx && !net.seatPeer.includes(id)) { const p = game.players[i]; p.remote = false; p.isBot = true; p.control = 'bot'; labels[i] = 'BOT'; net.playSeats[i] = ''; net.ctrl[i] = ''; }
     });
     const obj = { phase: net.phase, mid: net.mid, cfg: netCfg(), seats: seatsInfo(), n: peers.length }, str = JSON.stringify(obj);
     if (str !== net.sent) { net.sent = str; net.sala.presence(obj).catch(() => {}); renderLobby(); }
@@ -2515,11 +2557,12 @@ if (typeof module !== 'undefined') module.exports = VB;
   function hostStart() {
     const seats = seatsInfo(), dev = myDevice();
     net.mid++; net.phase = 'play';
-    const slots = seats.map((s, i) => ({ team: teamOf(s.k), char: s.char, control: i === 0 ? dev : s.peer ? 'net:' + s.peer : 'bot' }));
+    const hi = net.hostIdx = seats.findIndex(s => s.k === net.hostSeat);
+    const slots = seats.map((s, i) => ({ team: teamOf(s.k), char: s.char, control: i === hi ? dev : s.peer ? 'net:' + s.peer : 'bot' }));
     game = VB.createGame(Object.assign(netCfg(), { slots, firstServe: Math.random() < 0.5 ? 0 : 1 }));
     game.net = { host: true, pid: 'h', seq: 0, out: [], abOut: [] };
-    game.players.forEach((p, i) => { p.remote = i > 0 && !!seats[i].peer; });
-    labels = seats.map(s => (s.peer ? s.nick : 'BOT')); net.playSeats = seats.map(s => s.peer); net.ctrl = seats.map((s, i) => (i > 0 ? s.peer : ''));
+    game.players.forEach((p, i) => { p.remote = i !== hi && !!seats[i].peer; });
+    labels = seats.map(s => (s.peer ? s.nick : 'BOT')); net.playSeats = seats.map(s => s.peer); net.ctrl = seats.map((s, i) => (i !== hi ? s.peer : ''));
     netStartCommon();
     net.sala.presence({ rs: VB.netRefState(game), head: null, pl: {}, ab: [] }).catch(() => {});
   }
@@ -2673,18 +2716,18 @@ if (typeof module !== 'undefined') module.exports = VB;
       $('#lbCfg').textContent = (v.seats.length === 4 ? '2 contra 2' : '1 contra 1') + ' · ' + (c.rules === 'volley' ? 'Clásico, 3 toques' : 'Libre, 4 toques') + ' · '
         + (c.timeLimit ? 'a 3 minutos' : 'a ' + (Number.isFinite(c.points) ? c.points | 0 : 11) + ' puntos');
     }
-    let humans = 0, seated = host;
+    let humans = 0;
+    const seated = host || v.seats.some(s => s && s.peer && s.peer === mine);
     v.seats.forEach((s, i) => {
       if (!s) return;
-      const team = v.seats.length === 2 ? i : (i < 2 ? 0 : 1), isMe = host ? i === 0 : (!!s.peer && s.peer === mine);
+      const team = v.seats.length === 2 ? i : (i < 2 ? 0 : 1), isMe = host ? s.k === net.hostSeat : (!!s.peer && s.peer === mine);
       const ch = CHARS.find(c => c.id === validChar(s.char));
       if (s.peer) humans++;
-      if (isMe) seated = true;
       const row = document.createElement('div'); row.className = 'seat t' + team;
       const dot = document.createElement('span'); dot.className = 'dot';
       const who = document.createElement('div'); who.className = 'seat-who';
       const nm = document.createElement('strong'); nm.textContent = s.peer ? (cleanNick(s.nick) || 'Invitado') : 'Bot';
-      const sm = document.createElement('small'); sm.textContent = 'Equipo ' + TEAM[team].name + (isMe ? ' · tú' : i === 0 ? ' · anfitrión' : !s.peer ? ' · hueco libre' : '');
+      const sm = document.createElement('small'); sm.textContent = 'Equipo ' + TEAM[team].name + (isMe ? ' · tú' : s.host ? ' · anfitrión' : !s.peer ? ' · hueco libre' : '');
       who.append(nm, sm);
       const pick = document.createElement('div'); pick.className = 'pick';
       const h3 = document.createElement('h3'); h3.textContent = ch.name;
@@ -2694,19 +2737,33 @@ if (typeof module !== 'undefined') module.exports = VB;
         const b = document.createElement('button'); b.type = 'button'; b.textContent = d < 0 ? '‹' : '›'; b.setAttribute('aria-label', label); b.dataset.fk = i + ':' + d;
         b.addEventListener('click', () => {
           const next = CHARS[(CHARS.indexOf(ch) + d + CHARS.length) % CHARS.length].id;
-          if (host) { cfg.slots[s.k].char = next; saveCfg(); }
+          if (host && isMe) { net.myChar = next; if (s.k === 0) { cfg.slots[0].char = next; saveCfg(); } }
+          else if (host) { cfg.slots[s.k].char = next; saveCfg(); }
           else { net.myChar = next; net.sala.presence({ char: next }).catch(() => {}); }
         });
         return b;
       };
       if (can) pick.append(mk(-1, 'Personaje anterior'), h3, mk(1, 'Personaje siguiente')); else pick.append(h3);
-      row.append(dot, who, pick); box.append(row);
+      const act = document.createElement('div'); act.className = 'seat-act' + (can ? ' has-arrows' : ''); act.append(pick);
+      row.append(dot, who, act);
+      if (!isMe && Number.isInteger(s.k) && (seated || !s.peer)) { // ocupar un hueco libre o cambiar el sitio con quien lo tiene
+        const sw = document.createElement('button'); sw.type = 'button'; sw.className = 'swap'; sw.dataset.fk = 's' + i;
+        const lg = document.createElement('span'), sh = document.createElement('span'); lg.className = 'l'; sh.className = 's';
+        lg.textContent = s.peer ? 'Cambiar sitio' : 'Ponerme aquí'; sh.textContent = s.peer ? 'Cambiar' : 'Ocupar'; sw.append(lg, sh);
+        sw.setAttribute('aria-label', s.peer ? 'Cambiar el sitio con ' + nm.textContent : 'Ponerme en este hueco del equipo ' + TEAM[team].name);
+        sw.addEventListener('click', () => {
+          if (host) { moveSeat('', s.k); net.sent = ''; }
+          else net.sala.presence({ mv: [++net.mvSeq, s.k] }).catch(() => {});
+        });
+        act.append(sw); act.classList.add('has-swap');
+      }
+      box.append(row);
     });
     if (keep) { const b = box.querySelector(`[data-fk="${keep}"]`); if (b) b.focus(); }
     const watchers = Math.max(0, (v.n | 0) - humans);
     $('#lbNote').textContent = host
       ? (humans === 1 ? 'Aún no ha entrado nadie. Si empiezas ahora, los huecos libres los juegan bots.' : humans + ' jugadores en la sala. Los huecos libres los juegan bots.') + (watchers ? ' ' + watchers + ' mirando.' : '')
-      : seated ? 'Elige personaje. El anfitrión empieza el partido.' : 'No quedan huecos: verás el partido como espectador.';
+      : seated ? 'Elige personaje y sitio. El anfitrión empieza el partido.' : 'No quedan huecos: verás el partido como espectador.';
     fitMenu();
   }
   window.rvDebug = () => ({ game, net, scene, labels });
