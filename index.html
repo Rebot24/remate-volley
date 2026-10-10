@@ -2302,11 +2302,16 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
   }
 
-  /* ---------- Sala directa entre navegadores (cuando el juego se abre fuera de Claude) ---------- */
-  // Misma forma que la sala de Claude (peers, presence, onPeers, leave), montada sobre WebRTC con PeerJS:
-  // el anfitrión registra el código de la sala y reenvía a cada invitado lo que publican los demás.
+  /* ---------- Sala fuera de Claude: conexión directa entre navegadores, con un servidor de reserva ---------- */
+  // Misma forma que la sala de Claude (peers, presence, onPeers, leave). Dos caminos hasta el anfitrión:
+  //  · directo: WebRTC con PeerJS. Es el más rápido, pero hay redes (datos móviles, wifi con aislamiento) que no lo dejan pasar.
+  //  · de reserva: mensajes por un servidor MQTT público, que funciona desde cualquier red. Cada invitado usa el primero que le sirva.
+  // El anfitrión atiende los dos a la vez y reenvía a cada uno lo que publican los demás.
   const RV_PEER = window.RV_PEER || {};
   const PEER_LIB = RV_PEER.lib || 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', PEER_PREFIX = 'remate-volley-';
+  const RELAYS = RV_PEER.relays || ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+  const ONLINE_VIA = (() => { try { return new URLSearchParams(location.search).get('online') || ''; } catch (e) { return ''; } })(); // ?online=reserva | directo, para diagnosticar
+  const USE_DIRECT = ONLINE_VIA !== 'reserva', USE_RELAY = ONLINE_VIA !== 'directo' && typeof WebSocket === 'function';
   let peerLib = null;
   function loadPeer() {
     return peerLib || (peerLib = new Promise((res, rej) => {
@@ -2318,89 +2323,207 @@ if (typeof module !== 'undefined') module.exports = VB;
       document.head.append(s);
     }));
   }
+  // Cliente MQTT mínimo sobre WebSocket (3.1.1, sin confirmaciones): conectar, suscribirse a un tema y publicar en él.
+  function mqttLink(url, topic, onMsg) {
+    const enc = new TextEncoder(), dec = new TextDecoder();
+    const link = { url, ok: false, since: 0, pub: o => { if (link.ok) send(pkt(0x30, cat(s16(topic), enc.encode(JSON.stringify(o))))); }, close: () => { dead = true; link.ok = false; clearInterval(ping); try { ws.close(); } catch (e) { /* */ } } };
+    let ws = null, dead = false, buf = new Uint8Array(0), ping = 0, tries = 0;
+    const cat = (...parts) => { let n = 0; for (const p of parts) n += p.length; const o = new Uint8Array(n); let i = 0; for (const p of parts) { o.set(p, i); i += p.length; } return o; };
+    const s16 = s => { const b = enc.encode(s); return cat([b.length >> 8, b.length & 255], b); };
+    const pkt = (type, body) => { const len = []; let n = body.length; do { let d = n % 128; n = (n - d) / 128; if (n) d |= 128; len.push(d); } while (n); return cat([type], len, body); };
+    const send = u8 => { if (ws && ws.readyState === 1) { try { ws.send(u8); } catch (e) { /* */ } } };
+    const again = () => { if (!dead) setTimeout(open, Math.min(8000, 800 * 2 ** tries++)); };
+    function feed(chunk) {
+      buf = buf.length ? cat(buf, chunk) : chunk;
+      for (;;) {
+        if (buf.length < 2) return;
+        let i = 1, len = 0, mul = 1, d;
+        do { if (i >= buf.length) return; d = buf[i++]; len += (d & 127) * mul; mul *= 128; } while ((d & 128) && i < 5);
+        if (buf.length < i + len) return;
+        const head = buf[0], body = buf.subarray(i, i + len);
+        buf = buf.slice(i + len);
+        if (head >> 4 === 2) { // aceptado: me suscribo al tema de la sala
+          if (body[1] !== 0) { try { ws.close(); } catch (e) { /* */ } return; }
+          send(pkt(0x82, cat([0, 1], s16(topic), [0])));
+        } else if (head >> 4 === 9) { link.ok = true; link.since = performance.now(); tries = 0; }
+        else if (head >> 4 === 3) {
+          const tl = (body[0] << 8) | body[1], at = 2 + tl + ((head & 6) ? 2 : 0);
+          let m = null;
+          try { m = JSON.parse(dec.decode(body.subarray(at))); } catch (e) { m = null; }
+          if (m && typeof m === 'object') { try { onMsg(link, m); } catch (e) { /* */ } }
+        }
+      }
+    }
+    function open() {
+      if (dead) return;
+      try { ws = new WebSocket(url, 'mqtt'); } catch (e) { again(); return; }
+      const mine = ws;
+      ws.binaryType = 'arraybuffer'; buf = new Uint8Array(0);
+      ws.onopen = () => { send(pkt(0x10, cat(s16('MQTT'), [4, 2, 0, 30], s16('rv' + Math.random().toString(36).slice(2, 14))))); clearInterval(ping); ping = setInterval(() => send(new Uint8Array([0xC0, 0])), 12000); };
+      ws.onmessage = e => { if (ws === mine && e.data instanceof ArrayBuffer) feed(new Uint8Array(e.data)); };
+      ws.onclose = () => { if (ws !== mine) return; link.ok = false; clearInterval(ping); again(); };
+      ws.onerror = () => { /* le sigue un cierre */ };
+    }
+    open();
+    return link;
+  }
   function p2pJoin(name, role) {
     return new Promise((resolve, reject) => {
-      const host = role === 'h', hostId = PEER_PREFIX + name, opts = RV_PEER.opts || {};
-      const peer = host ? new window.Peer(hostId, opts) : new window.Peer(opts);
-      const store = new Map(), conns = new Map(), seen = new Map();
-      let me = '', mine = Object.freeze({}), snap = [], cbs = [], errs = [], hostConn = null, done = false, closed = false;
+      const host = role === 'h', hostId = PEER_PREFIX + name, opts = RV_PEER.opts || {}, topic = 'remate-volley/1/' + name;
+      const rid = () => Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+      const me = host ? hostId : 'g' + rid(), nonce = rid(), t0 = performance.now();
+      const store = new Map(), conns = new Map(), seen = new Map(), links = [];
+      let peer = null, mine = Object.freeze({}), snap = [], cbs = [], errs = [], hostConn = null, done = false, closed = false;
+      let via = '', pick = null, joinT = 0, directDead = !USE_DIRECT || !window.Peer, noPeer = false, peerOpen = false, foreign = false, beats = 0;
+      const now = () => performance.now();
       const rebuild = () => {
         snap = [{ peer: me, sameTab: true, presence: mine }];
         store.forEach((v, k) => snap.push({ peer: k, sameTab: false, presence: v }));
         cbs.forEach(f => { try { f({ peers: snap }); } catch (e) { /* */ } });
       };
       const merge = (k, patch) => store.set(k, Object.freeze(Object.assign({}, store.get(k) || {}, patch)));
+      const shut = () => { closed = true; clearInterval(beat); links.forEach(l => l.close()); try { if (peer) peer.destroy(); } catch (e) { /* */ } };
       const fail = code => {
-        if (!done) { done = true; closed = true; try { peer.destroy(); } catch (e) { /* */ } reject(Object.assign(new Error(code), { code })); }
-        else if (!closed) { closed = true; errs.forEach(f => { try { f({ code }); } catch (e) { /* */ } }); }
+        if (!done) { done = true; shut(); reject(Object.assign(new Error(code), { code })); }
+        else if (!closed) { shut(); errs.forEach(f => { try { f({ code }); } catch (e) { /* */ } }); }
+      };
+      const ready = () => { if (!done) { done = true; resolve(room); } };
+      // Anfitrión: a los invitados directos, uno a uno; a los de reserva, una vez por servidor (lo oyen todos los suyos)
+      const busy = l => { let n = false; conns.forEach(c => { if (c.relay === l) n = true; }); return n; };
+      const fan = (msg, exPeer, exLink) => {
+        conns.forEach((c, k) => { if (!c.relay && k !== exPeer && c.open) c.send(msg); });
+        links.forEach(l => { if (l !== exLink && l.ok && busy(l)) l.pub(msg); });
       };
       const room = {
-        name, peers: () => snap,
+        name, peers: () => snap, via: () => via, slow: () => (host ? links.some(busy) : via === 'relay'),
         presence: async patch => {
           mine = Object.freeze(Object.assign({}, mine, patch)); rebuild();
           const msg = { t: 'p', from: me, p: patch };
-          if (host) conns.forEach(c => { if (c.open) c.send(msg); }); else if (hostConn && hostConn.open) hostConn.send(msg);
+          if (host) fan(msg); else if (via === 'relay') pick.pub(msg); else if (hostConn && hostConn.open) hostConn.send(msg);
         },
         onPeers: (f, onErr) => { cbs.push(f); if (onErr) errs.push(onErr); return () => { cbs = cbs.filter(x => x !== f); errs = errs.filter(x => x !== onErr); }; },
-        leave: async () => { closed = true; clearInterval(beat); try { peer.destroy(); } catch (e) { /* */ } },
+        leave: async () => { if (closed) return; if (!host && via === 'relay' && pick) pick.pub({ t: 'bye', from: me }); shut(); },
       };
       const drop = k => { // un invitado se ha ido (o lleva demasiado sin dar señales)
         const c = conns.get(k);
         if (!c) return;
         conns.delete(k); seen.delete(k); store.delete(k); rebuild();
-        try { c.close(); } catch (e) { /* */ }
-        conns.forEach(o => { if (o.open) o.send({ t: 'bye', from: k }); });
+        if (c.relay) { if (c.relay.ok) c.relay.pub({ t: 'bye', from: k }); } else { try { c.close(); } catch (e) { /* */ } }
+        fan({ t: 'bye', from: k }, k, c.relay);
       };
-      // Latido: un navegador que se cierra de golpe no avisa, así que cada uno da señales una vez por segundo
+      const hello = k => { const all = {}; all[me] = mine; store.forEach((v, o) => { if (o !== k) all[o] = v; }); return { t: 'hello', to: k, from: me, peers: all }; };
+      const fromHost = m => { // invitado: lo que llega del anfitrión, por cualquiera de los dos caminos
+        if (m.t === 'hello' && m.peers && typeof m.peers === 'object') {
+          for (const k in m.peers) if (k !== me && m.peers[k] && typeof m.peers[k] === 'object') store.set(k, Object.freeze(m.peers[k]));
+          rebuild(); ready();
+        } else if (m.t === 'p' && typeof m.from === 'string' && m.from !== me && m.p && typeof m.p === 'object') { merge(m.from, m.p); rebuild(); }
+        else if (m.t === 'bye') { if (m.from === me) { if (done) fail('upstream_error'); } else { store.delete(m.from); rebuild(); } }
+      };
+      const onBus = (l, m) => {
+        if (closed) return;
+        if (host) {
+          if (m.t === 'b') { if (m.n !== nonce && !done) foreign = true; return; } // otra sala con este mismo código
+          const k = m.from;
+          if (typeof k !== 'string' || k === me || k.length > 40) return;
+          let c = conns.get(k);
+          if (m.t === 'j') {
+            if (c && !c.relay) return; // ya entró por el camino directo
+            if (!c) { c = { peer: k, relay: l, open: true }; conns.set(k, c); } else c.relay = l;
+            seen.set(k, now()); l.pub(hello(k));
+          } else if (c && c.relay === l) {
+            seen.set(k, now());
+            if (m.t === 'p' && m.p && typeof m.p === 'object') { merge(k, m.p); rebuild(); fan({ t: 'p', from: k, p: m.p }, k, l); }
+            else if (m.t === 'bye') drop(k);
+          }
+          return;
+        }
+        if (m.t === 'b') { if (!pick && !via) pick = l; if (l === pick) seen.set('h', now()); return; }
+        if (via !== 'relay' || l !== pick || (m.to && m.to !== me) || m.t === 'j' || m.t === 'k') return;
+        fromHost(m);
+      };
+      // Cada segundo: señales de vida (un navegador que se cierra de golpe no avisa) y, si hace falta, cambio al camino de reserva
       const beat = setInterval(() => {
         if (closed) { clearInterval(beat); return; }
-        const t = performance.now();
-        if (host) conns.forEach((c, k) => { if (c.open) c.send({ t: 'k' }); if (t - (seen.get(k) || t) > 6000) drop(k); });
-        else if (hostConn && done) { if (hostConn.open) hostConn.send({ t: 'k' }); if (t - (seen.get('h') || t) > 6000) { store.clear(); rebuild(); fail('upstream_error'); } }
-      }, 1000);
-      addEventListener('pagehide', () => { if (!closed) room.leave(); });
+        const t = now(); beats++;
+        if (host) {
+          conns.forEach((c, k) => { if (!c.relay && c.open) c.send({ t: 'k' }); if (t - (seen.get(k) || t) > 6000) drop(k); });
+          links.forEach(l => {
+            if (!l.ok) return;
+            if (beats % 2 === 0) l.pub({ t: 'b', from: me, n: nonce });
+            if (beats % 8 === 0 && busy(l)) { l.pub({ t: 'p', from: me, p: mine }); conns.forEach((c, k) => { if (c.relay !== l && store.has(k)) l.pub({ t: 'p', from: k, p: store.get(k) }); }); } // por si se perdió algo
+          });
+        } else if (done) {
+          if (via === 'relay') { pick.pub(beats % 8 === 0 ? { t: 'p', from: me, p: mine } : { t: 'k', from: me }); } else if (hostConn && hostConn.open) hostConn.send({ t: 'k' });
+          if (t - (seen.get('h') || t) > 6000) { store.clear(); rebuild(); fail('upstream_error'); }
+        }
+      }, 500);
+      const step = setInterval(() => { // arranque: decide por dónde se entra, o cuándo se da por imposible
+        if (done || closed) { clearInterval(step); return; }
+        const el = now() - t0, up = links.some(l => l.ok);
+        if (host) {
+          if (peerOpen) ready();
+          else if (foreign) fail('taken');
+          else if ((directDead || el > 7000) && links.some(l => l.ok && now() - l.since > 1500)) ready(); // sin servidor de encuentro: sala solo por el de reserva
+          else if (el > 20000 || (directDead && !USE_RELAY)) fail('upstream_error');
+          return;
+        }
+        if (!via && pick && (directDead || el > 4500)) { // el directo no llega: entro por el servidor de reserva
+          via = 'relay'; seen.set('h', now());
+          links.forEach(l => { if (l !== pick) l.close(); });
+          try { if (peer) peer.destroy(); } catch (e) { /* */ }
+        }
+        if (via === 'relay') { if (now() - joinT > 900) { joinT = now(); pick.pub({ t: 'j', from: me }); pick.pub({ t: 'p', from: me, p: mine }); } if (el > 16000) fail('upstream_error'); return; }
+        if (directDead && !pick && (el > 9000 || !USE_RELAY)) fail(noPeer || !USE_DIRECT ? 'no_room' : up || !USE_RELAY ? 'blocked' : 'upstream_error');
+        else if (el > 20000) fail('upstream_error');
+      }, 200);
+      addEventListener('pagehide', () => { room.leave(); });
+      rebuild();
+      if (USE_RELAY) for (const url of RELAYS) links.push(mqttLink(url, topic, onBus));
+      if (!USE_DIRECT || !window.Peer) return;
+      try { peer = new window.Peer(me, opts); } catch (e) { directDead = true; return; }
       peer.on('error', e => {
         const t = e && e.type;
-        if (t === 'unavailable-id') fail('taken');
-        else if (t === 'peer-unavailable') fail('no_room');
-        else if (!done) fail(t === 'browser-incompatible' ? 'not_permitted' : 'upstream_error');
-        // con la partida ya en marcha, un fallo del servidor de encuentro no corta la conexión directa
+        if (done) return; // con la sala ya abierta, un fallo del servidor de encuentro no corta a nadie
+        if (t === 'unavailable-id') { if (host) fail('taken'); else directDead = true; }
+        else if (t === 'peer-unavailable') { noPeer = true; directDead = true; }
+        else if (t === 'browser-incompatible' && !USE_RELAY) fail('not_permitted');
+        else directDead = true;
       });
-      peer.on('disconnected', () => { if (!closed) { try { peer.reconnect(); } catch (e) { /* */ } } });
-      peer.on('open', pid => {
-        me = pid; rebuild();
-        if (host) { done = true; resolve(room); return; }
+      peer.on('disconnected', () => { setTimeout(() => { if (!closed && via !== 'relay') { try { peer.reconnect(); } catch (e) { /* */ } } }, 1500); });
+      peer.on('open', () => {
+        if (host) { peerOpen = true; return; }
+        if (via) return;
         hostConn = peer.connect(hostId, { reliable: true, serialization: 'json' });
-        hostConn.on('open', () => hostConn.send({ t: 'p', from: me, p: mine }));
+        hostConn.on('open', () => { if (via) return; hostConn.send({ t: 'p', from: me, p: mine }); });
         hostConn.on('data', m => {
-          seen.set('h', performance.now());
+          if (via === 'relay') return;
+          seen.set('h', now());
           if (!m || typeof m !== 'object') return;
-          if (m.t === 'hello' && m.peers && typeof m.peers === 'object') {
-            for (const k in m.peers) if (k !== me && m.peers[k] && typeof m.peers[k] === 'object') store.set(k, Object.freeze(m.peers[k]));
-            rebuild();
-            if (!done) { done = true; resolve(room); }
-          } else if (m.t === 'p' && typeof m.from === 'string' && m.from !== me && m.p && typeof m.p === 'object') { merge(m.from, m.p); rebuild(); }
-          else if (m.t === 'bye') { store.delete(m.from); rebuild(); }
+          if (m.t === 'hello' && !via) { via = 'direct'; links.forEach(l => l.close()); }
+          fromHost(m);
         });
-        hostConn.on('close', () => { store.clear(); rebuild(); if (!done) fail('no_room'); });
+        hostConn.on('error', () => { if (!via) directDead = true; });
+        hostConn.on('close', () => { if (via === 'direct') { store.clear(); rebuild(); } else if (!via) directDead = true; });
       });
       if (host) peer.on('connection', c => {
-        conns.set(c.peer, c); seen.set(c.peer, performance.now());
-        const gone = () => { if (conns.get(c.peer) === c) drop(c.peer); };
-        c.on('open', () => { const all = {}; all[me] = mine; store.forEach((v, k) => { if (k !== c.peer) all[k] = v; }); c.send({ t: 'hello', peers: all }); });
+        const k = c.peer;
+        const gone = () => { if (conns.get(k) === c) drop(k); };
+        c.on('open', () => {
+          if (conns.has(k)) { try { c.close(); } catch (e) { /* */ } return; } // ya entró por el de reserva
+          conns.set(k, c); seen.set(k, now()); c.send(hello(k));
+        });
         c.on('data', m => {
-          seen.set(c.peer, performance.now());
+          if (conns.get(k) !== c) return;
+          seen.set(k, now());
           if (!m || m.t !== 'p' || !m.p || typeof m.p !== 'object') return;
-          merge(c.peer, m.p); rebuild();
-          const msg = { t: 'p', from: c.peer, p: m.p };
-          conns.forEach((o, k) => { if (k !== c.peer && o.open) o.send(msg); });
+          merge(k, m.p); rebuild();
+          fan({ t: 'p', from: k, p: m.p }, k, null);
         });
         c.on('close', gone); c.on('error', gone);
       });
-      setTimeout(() => { if (!done) fail('upstream_error'); }, 20000);
     });
   }
-  const p2pApi = { join: (name, role) => loadPeer().then(() => p2pJoin(name, role)) };
+  const p2pApi = { join: (name, role) => loadPeer().catch(() => { if (!USE_RELAY) throw Object.assign(new Error('lib'), { code: 'no_lib' }); }).then(() => p2pJoin(name, role)) };
 
   /* ---------- Online ---------- */
   // Cada dispositivo simula su jugador y sus golpes; el anfitrión lleva además los bots y el marcador.
@@ -2422,6 +2545,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const c = e && e.code;
     return c === 'not_permitted' || c === 'not_granted' ? 'Esta vista no puede usar salas online.'
       : c === 'no_lib' ? 'No he podido cargar la parte online. Comprueba la conexión a internet.'
+      : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
   async function netInit() {
@@ -2429,7 +2553,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     let api = null;
     try { api = inClaude ? await window.claude.use('room') : null; } catch (e) { api = null; }
     // Dentro de Claude, su sala; en una web propia, conexión directa entre navegadores
-    net.api = api && api.join ? api : (!inClaude && window.RTCPeerConnection ? p2pApi : null);
+    net.api = api && api.join ? api : (!inClaude && (window.RTCPeerConnection || USE_RELAY) ? p2pApi : null);
     net.direct = net.api === p2pApi;
     $('#btnCreate').disabled = $('#btnJoin').disabled = !net.api;
     netStatus(net.api ? 'Crea una sala y pasa el código a tus amigos, o escribe el suyo para unirte.'
@@ -2457,6 +2581,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     } catch (e) { netStatus(netErr(e)); }
     net.busy = false;
   }
+  const noRoom = code => 'No hay ninguna sala abierta con el código ' + code.toUpperCase() + '. Quien la creó tiene que seguir en la sala, con el juego a la vista.';
   async function netJoin() {
     if (!net.api || net.busy || net.sala) return;
     const code = $('#code').value.toLowerCase().replace(/[^a-z]/g, '').slice(0, 4);
@@ -2465,10 +2590,10 @@ if (typeof module !== 'undefined') module.exports = VB;
     try {
       let sala;
       try { sala = await net.api.join('rv-' + code, 'g'); }
-      catch (e) { if (e && e.code === 'no_room') { netStatus('No hay ninguna sala abierta con el código ' + code.toUpperCase() + '.'); net.busy = false; return; } throw e; }
+      catch (e) { if (e && e.code === 'no_room') { netStatus(noRoom(code)); net.busy = false; return; } throw e; }
       let found = false;
       for (let k = 0; k < 30 && !found; k++) { await wait(200); found = sala.peers().some(p => !p.sameTab && p.presence && p.presence.role === 'h'); }
-      if (!found) { await sala.leave().catch(() => {}); netStatus('No hay ninguna sala abierta con el código ' + code.toUpperCase() + '.'); }
+      if (!found) { await sala.leave().catch(() => {}); netStatus(noRoom(code)); }
       else netEnter(sala, code, 'g');
     } catch (e) { netStatus(netErr(e)); }
     net.busy = false;
@@ -2688,7 +2813,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     g.net.out.length = 0; g.net.abOut.length = 0;
     net.sendT -= dt;
     if (!hot && net.sendT > 0) return;
-    net.sendT = 0.05;
+    net.sendT = net.sala.slow && net.sala.slow() ? 0.07 : 0.05; // por el servidor de reserva, algo menos de tráfico
     const pl = {};
     for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
     const patch = { pl, ab: net.abs.slice() };
@@ -2714,7 +2839,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (!host) {
       const c = v.cfg || {};
       $('#lbCfg').textContent = (v.seats.length === 4 ? '2 contra 2' : '1 contra 1') + ' · ' + (c.rules === 'volley' ? 'Clásico, 3 toques' : 'Libre, 4 toques') + ' · '
-        + (c.timeLimit ? 'a 3 minutos' : 'a ' + (Number.isFinite(c.points) ? c.points | 0 : 11) + ' puntos');
+        + (c.timeLimit ? 'a 3 minutos' : 'a ' + (Number.isFinite(c.points) ? c.points | 0 : 11) + ' puntos')
+        + (net.sala.via && net.sala.via() === 'relay' ? ' · conexión de reserva' : '');
     }
     let humans = 0;
     const seated = host || v.seats.some(s => s && s.peer && s.peer === mine);
