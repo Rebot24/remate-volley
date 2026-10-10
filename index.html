@@ -431,6 +431,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
             <li id="olStep">Ellos abren este mismo juego con su sesión de Claude, escriben el código y pulsan Unirse.</li>
             <li>Cada uno elige personaje y equipo en la sala. Los huecos libres los juegan bots.</li>
             <li>El anfitrión lleva los bots y el marcador: debe dejar la pestaña a la vista.</li>
+            <li>Si no os encontráis, recargad todos la página: tenéis que ver la misma versión (<span id="olVer"></span>).</li>
           </ul>
         </div>
       </div>
@@ -2309,7 +2310,8 @@ if (typeof module !== 'undefined') module.exports = VB;
   // El anfitrión atiende los dos a la vez y reenvía a cada uno lo que publican los demás.
   const RV_PEER = window.RV_PEER || {};
   const PEER_LIB = RV_PEER.lib || 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', PEER_PREFIX = 'remate-volley-';
-  const RELAYS = RV_PEER.relays || ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+  // Por orden de preferencia: los dos primeros entregan en unos 40 ms; el tercero frena los mensajes seguidos y queda de último recurso
+  const RELAYS = RV_PEER.relays || ['wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
   const ONLINE_VIA = (() => { try { return new URLSearchParams(location.search).get('online') || ''; } catch (e) { return ''; } })(); // ?online=reserva | directo, para diagnosticar
   const USE_DIRECT = ONLINE_VIA !== 'reserva', USE_RELAY = ONLINE_VIA !== 'directo' && typeof WebSocket === 'function';
   let peerLib = null;
@@ -2326,7 +2328,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   // Cliente MQTT mínimo sobre WebSocket (3.1.1, sin confirmaciones): conectar, suscribirse a un tema y publicar en él.
   function mqttLink(url, topic, onMsg) {
     const enc = new TextEncoder(), dec = new TextDecoder();
-    const link = { url, ok: false, since: 0, pub: o => { if (link.ok) send(pkt(0x30, cat(s16(topic), enc.encode(JSON.stringify(o))))); }, close: () => { dead = true; link.ok = false; clearInterval(ping); try { ws.close(); } catch (e) { /* */ } } };
+    const link = { url, ok: false, since: 0, heard: -1e9, pub: o => { if (link.ok) send(pkt(0x30, cat(s16(topic), enc.encode(JSON.stringify(o))))); }, close: () => { dead = true; link.ok = false; clearInterval(ping); try { ws.close(); } catch (e) { /* */ } } };
     let ws = null, dead = false, buf = new Uint8Array(0), ping = 0, tries = 0;
     const cat = (...parts) => { let n = 0; for (const p of parts) n += p.length; const o = new Uint8Array(n); let i = 0; for (const p of parts) { o.set(p, i); i += p.length; } return o; };
     const s16 = s => { const b = enc.encode(s); return cat([b.length >> 8, b.length & 255], b); };
@@ -2395,7 +2397,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         links.forEach(l => { if (l !== exLink && l.ok && busy(l)) l.pub(msg); });
       };
       const room = {
-        name, peers: () => snap, via: () => via, slow: () => (host ? links.some(busy) : via === 'relay'),
+        name, peers: () => snap, via: () => via, link: () => (pick ? pick.url : ''), slow: () => (host ? links.some(busy) : via === 'relay'),
         presence: async patch => {
           mine = Object.freeze(Object.assign({}, mine, patch)); rebuild();
           const msg = { t: 'p', from: me, p: patch };
@@ -2437,7 +2439,7 @@ if (typeof module !== 'undefined') module.exports = VB;
           }
           return;
         }
-        if (m.t === 'b') { if (!pick && !via) pick = l; if (l === pick) seen.set('h', now()); return; }
+        if (m.t === 'b') { l.heard = now(); if (l === pick) seen.set('h', l.heard); return; }
         if (via !== 'relay' || l !== pick || (m.to && m.to !== me) || m.t === 'j' || m.t === 'k') return;
         fromHost(m);
       };
@@ -2449,11 +2451,17 @@ if (typeof module !== 'undefined') module.exports = VB;
           conns.forEach((c, k) => { if (!c.relay && c.open) c.send({ t: 'k' }); if (t - (seen.get(k) || t) > 6000) drop(k); });
           links.forEach(l => {
             if (!l.ok) return;
-            if (beats % 2 === 0) l.pub({ t: 'b', from: me, n: nonce });
+            l.pub({ t: 'b', from: me, n: nonce });
             if (beats % 8 === 0 && busy(l)) { l.pub({ t: 'p', from: me, p: mine }); conns.forEach((c, k) => { if (c.relay !== l && store.has(k)) l.pub({ t: 'p', from: k, p: store.get(k) }); }); } // por si se perdió algo
           });
         } else if (done) {
-          if (via === 'relay') { pick.pub(beats % 8 === 0 ? { t: 'p', from: me, p: mine } : { t: 'k', from: me }); } else if (hostConn && hostConn.open) hostConn.send({ t: 'k' });
+          if (via === 'relay') {
+            if (t - pick.heard > 2500) { // mi servidor se ha callado: si el anfitrión sigue en otro, me paso a ese
+              const alt = links.find(l => l !== pick && l.ok && t - l.heard < 1500);
+              if (alt) { pick = alt; seen.set('h', t); alt.pub({ t: 'j', from: me }); alt.pub({ t: 'p', from: me, p: mine }); }
+            }
+            pick.pub(beats % 8 === 0 ? { t: 'p', from: me, p: mine } : { t: 'k', from: me });
+          } else if (hostConn && hostConn.open) hostConn.send({ t: 'k' });
           if (t - (seen.get('h') || t) > 6000) { store.clear(); rebuild(); fail('upstream_error'); }
         }
       }, 500);
@@ -2467,13 +2475,13 @@ if (typeof module !== 'undefined') module.exports = VB;
           else if (el > 20000 || (directDead && !USE_RELAY)) fail('upstream_error');
           return;
         }
-        if (!via && pick && (directDead || el > 4500)) { // el directo no llega: entro por el servidor de reserva
-          via = 'relay'; seen.set('h', now());
-          links.forEach(l => { if (l !== pick) l.close(); });
+        const best = links.find(l => l.ok && now() - l.heard < 3000); // el preferido de los que tienen al anfitrión
+        if (!via && best && (directDead || el > 4500) && (best === links[0] || el > 2500)) { // el directo no llega: entro por el servidor de reserva
+          via = 'relay'; pick = best; seen.set('h', now());
           try { if (peer) peer.destroy(); } catch (e) { /* */ }
         }
         if (via === 'relay') { if (now() - joinT > 900) { joinT = now(); pick.pub({ t: 'j', from: me }); pick.pub({ t: 'p', from: me, p: mine }); } if (el > 16000) fail('upstream_error'); return; }
-        if (directDead && !pick && (el > 9000 || !USE_RELAY)) fail(noPeer || !USE_DIRECT ? 'no_room' : up || !USE_RELAY ? 'blocked' : 'upstream_error');
+        if (directDead && !best && (el > 9000 || !USE_RELAY)) fail(noPeer || !USE_DIRECT ? 'no_room' : up || !USE_RELAY ? 'blocked' : 'upstream_error');
         else if (el > 20000) fail('upstream_error');
       }, 200);
       addEventListener('pagehide', () => { room.leave(); });
@@ -2499,7 +2507,7 @@ if (typeof module !== 'undefined') module.exports = VB;
           if (via === 'relay') return;
           seen.set('h', now());
           if (!m || typeof m !== 'object') return;
-          if (m.t === 'hello' && !via) { via = 'direct'; links.forEach(l => l.close()); }
+            if (m.t === 'hello' && !via) { via = 'direct'; links.forEach(l => l.close()); }
           fromHost(m);
         });
         hostConn.on('error', () => { if (!via) directDead = true; });
@@ -2548,7 +2556,9 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
+  const VERSION = 14; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
+    $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
     let api = null;
     try { api = inClaude ? await window.claude.use('room') : null; } catch (e) { api = null; }
