@@ -1444,10 +1444,11 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (!wantLock() || locked()) return;
     const active = !navigator.userActivation || navigator.userActivation.isActive; // sin un clic o una tecla reciente el navegador no deja
     lockAskT = performance.now();
-    const fail = () => { if (active && navigator.userActivation && performance.now() - unlockT > 1500) lockBroken = true; }; // con gesto y aun así rechazado: esta vista no lo permite
-    try { const r = stage.requestPointerLock(); if (r && r.catch) r.catch(fail); } catch (e) { fail(); }
+    // Rechazado con gesto y por algo que no se arregla con otro clic (p. ej. un marco que no lo permite): se deja de intentar.
+    // WrongDocumentError solo dice que la ventana no estaba al frente: se vuelve a probar con el siguiente clic.
+    const fail = e => { if (active && navigator.userActivation && e && e.name && e.name !== 'WrongDocumentError' && performance.now() - unlockT > 1500) lockBroken = true; };
+    try { const r = stage.requestPointerLock(); if (r && r.catch) r.catch(fail); } catch (e) { fail(e); }
   }
-  document.addEventListener('pointerlockerror', () => { if (navigator.userActivation && navigator.userActivation.isActive && performance.now() - unlockT > 1500) lockBroken = true; });
   document.addEventListener('pointerlockchange', () => {
     if (locked()) return;
     unlockT = performance.now();
@@ -2580,7 +2581,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 15; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 16; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
