@@ -39,13 +39,15 @@ button { cursor: pointer; }
 
 /* ---------- Pista ---------- */
 #stage { position: absolute; inset: 0; display: grid; grid-template: "cv" 1fr / 1fr; background: var(--ink); }
-#cv { grid-area: cv; display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
+#cv, #bgcv { grid-area: cv; display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
+#bgcv { will-change: transform; }
+#cv { position: relative; z-index: 1; } /* el fondo fijo va en su propia capa: no se repinta en cada fotograma */
 #padL, #padR { display: none; }
 #padL { grid-area: l; } #padR { grid-area: r; }
 #stage.touch #padL, #stage.touch #padR { display: flex; align-items: center; justify-content: center; padding: 10px; min-width: 0; }
 @media (orientation: portrait) {
   #stage.touch { grid-template: "cv cv" auto "l r" 1fr / 1fr 1fr; }
-  #stage.touch #cv { height: auto; aspect-ratio: 16 / 9; }
+  #stage.touch #cv, #stage.touch #bgcv { height: auto; aspect-ratio: 16 / 9; }
   #stage.touch #padL, #stage.touch #padR { align-items: flex-start; padding-block: 18px; }
 }
 @media (orientation: landscape) {
@@ -468,6 +470,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 <body>
 <div id="app">
   <div id="stage">
+    <canvas id="bgcv" width="960" height="540" aria-hidden="true"></canvas>
     <canvas id="cv" width="960" height="540" aria-label="Pista de voley cerrada"></canvas>
     <div id="tut" hidden>
       <div class="tut-text">
@@ -1636,7 +1639,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const perf = { tick: 0, draw: 0 };
   // Calidad automática: si el dispositivo no llega a unos 50 fotogramas por segundo durante un rato, se baja la resolución del lienzo
   // (y se quitan los halos difuminados, que son lo más caro de pintar). Dos escalones como mucho.
-  const QSCALE = [1, 0.78, 0.6];
+  const QSCALE = [1, 0.86, 0.74];
   let qLevel = 0, slowT = 0;
   let game = null, demo = true, paused = false, scene = 'menu', S = 1, last = 0, demoOverT = 0, shake = 0, clock = 0;
   const fx = { pops: [], parts: [], streaks: [], rings: [], bursts: [], trail: [], winds: [] };
@@ -1974,7 +1977,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
 
   /* ---------- Fondo: una pista por escenario (pabellón, playa, noche y nieve) ---------- */
-  const bg = document.createElement('canvas');
+  const bg = $('#bgcv'); // fondo de la pista: se pinta una vez por escenario, en una capa aparte
   let court = 'pabellon';
   function setCourt(id) { if (id && id !== court) { court = id; if (bg.width) renderBg(); } }
   const rnd = seed => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646; // azar fijo para que el fondo no cambie al redibujar
@@ -2552,13 +2555,23 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (k > 0.02) rrect(bx, y + 8, bw * k, 9, 4.5, k >= 1 ? SUN : '#8FA3D6');
     });
   }
+  // Aplica a la capa del fondo el mismo temblor y acercamiento que al lienzo del juego (en píxeles de pantalla)
+  let bgMoved = false;
+  function moveBg(sx, sy, z, fx, fy) {
+    if (!sx && !sy && z === 1) { if (bgMoved) { bg.style.transform = ''; bgMoved = false; } return; }
+    const w = bg.clientWidth, h = bg.clientHeight, sc = Math.min(w / W, h / H), ox = (w - W * sc) / 2, oy = (h - H * sc) / 2;
+    bg.style.transformOrigin = (ox + fx * sc).toFixed(1) + 'px ' + (oy + fy * sc).toFixed(1) + 'px';
+    bg.style.transform = `translate(${(sx * sc).toFixed(1)}px,${(sy * sc).toFixed(1)}px) scale(${z.toFixed(4)})`; bgMoved = true;
+  }
   function draw() {
     const g = game;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.setTransform(S, 0, 0, S, 0, 0);
     const sx = shake > 0 ? (Math.random() - 0.5) * shake * 22 : 0, sy = shake > 0 ? (Math.random() - 0.5) * shake * 16 : 0;
     ctx.save(); ctx.translate(sx, sy);
-    if (zoom.k > 0) { const z = 1 + zoom.k, fxp = lerp(480, zoom.x, 0.6), fyp = lerp(270, zoom.y, 0.6); ctx.translate(fxp, fyp); ctx.scale(z, z); ctx.translate(-fxp, -fyp); }
-    ctx.drawImage(bg, 0, 0, W, H);
+    let z = 1, fxp = 480, fyp = 270;
+    if (zoom.k > 0) { z = 1 + zoom.k; fxp = lerp(480, zoom.x, 0.6); fyp = lerp(270, zoom.y, 0.6); ctx.translate(fxp, fyp); ctx.scale(z, z); ctx.translate(-fxp, -fyp); }
+    moveBg(sx, sy, z, fxp, fyp); // el temblor y el acercamiento también mueven la capa del fondo
     drawCrowd(); drawAmbient();
     const env = g.env, b = ballOff.x || ballOff.y ? Object.assign({}, g.ball, { x: g.ball.x + ballOff.x, y: g.ball.y + ballOff.y }) : g.ball; // online: el salto tras un golpe ajeno se suaviza
     // Gravedad lunar
@@ -3272,7 +3285,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 23; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 24; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4078,8 +4091,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     fitMenu();
     const r = cv.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const sc = Math.min(r.width / W, r.height / H), dpr = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2);
-    const bw = clamp(Math.round(W * sc * dpr * QSCALE[qLevel]), 480, coarse ? 1280 : 1920);
+    const sc = Math.min(r.width / W, r.height / H), dpr0 = Math.min(window.devicePixelRatio || 1, 3), dpr = Math.max(dpr0 * QSCALE[qLevel], Math.min(dpr0, 1.75)); // nítido: a la densidad real de la pantalla
+    const bw = clamp(Math.round(W * sc * dpr), 480, 2560);
     if (cv.width !== bw || !bg.width) { cv.width = bw; cv.height = Math.round(bw * H / W); S = bw / W; renderBg(); }
     const sr = stage.getBoundingClientRect(), ch = H * sc;
     hud.style.setProperty('--hb', clamp(ch * 0.055, 20, 32) + 'px');
@@ -4096,7 +4109,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const t0 = performance.now();
     if (dt > 0 && scene === 'play' && !paused && !document.hidden && qLevel < 2) {
       slowT = dt > 0.021 ? slowT + dt : Math.max(0, slowT - dt * 0.5);
-      if (slowT > 2.5) { qLevel++; slowT = 0; resize(); }
+      if (slowT > 4) { qLevel++; slowT = 0; resize(); }
     }
     tick(dt);
     if (locked() && !wantLock()) document.exitPointerLock(); // fin del partido, menú, sala…
