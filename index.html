@@ -453,6 +453,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
             <li><strong>4 toques</strong> o <strong>3 toques</strong> por equipo, según las reglas elegidas. En 2 contra 2 nadie puede tocar dos veces seguidas.</li>
             <li><strong>Faltas en el saque</strong>, con punto para el rival: que el equipo que saca toque el balón antes de que cruce la red, o que quien recibe lo remate al primer toque.</li>
             <li>La habilidad de tu personaje se recarga mientras el balón está en juego.</li>
+            <li>Durante el partido el ratón queda dentro del juego. <strong>Escape</strong> lo suelta y pone la pausa.</li>
             <li>El <strong>Tutorial</strong> te enseña cada golpe paso a paso.</li>
           </ul>
         </div>
@@ -1416,7 +1417,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     let n = 0;
     labels = game.players.map(p => (p.isBot ? 'BOT' : 'J' + (++n)));
     $('#menu').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
-    buildPads(); audioInit(); resize();
+    buildPads(); audioInit(); resize(); lockMouse();
   }
   function toMenu() {
     endTut();
@@ -1429,8 +1430,29 @@ if (typeof module !== 'undefined') module.exports = VB;
     paused = v; $('#pause').hidden = !v;
     $('#btnRestart').hidden = !!net.sala; $('#btnQuit').textContent = net.sala ? 'Salir de la sala' : 'Menú';
     $('#pause h2').textContent = net.sala ? 'El partido sigue' : 'Pausa';
-    if (v) $('#btnResume').focus();
+    if (v) $('#btnResume').focus(); else lockMouse();
   }
+
+  /* ---------- Ratón bloqueado durante el partido ---------- */
+  // Mientras se juega, el puntero queda atrapado en la pista (y oculto), así un clic no se escapa fuera del juego.
+  // Escape lo suelta y pone la pausa; al seguir se vuelve a bloquear. Con pantalla táctil o en el tutorial no se bloquea.
+  const canLock = !coarse && typeof Element !== 'undefined' && 'requestPointerLock' in Element.prototype;
+  let lockBroken = false, lockAskT = 0, unlockT = -1e9;
+  const locked = () => !!document.pointerLockElement;
+  const wantLock = () => canLock && !lockBroken && scene === 'play' && !paused && !tut && !demo && !!game && game.state !== 'over' && $('#end').hidden;
+  function lockMouse() {
+    if (!wantLock() || locked()) return;
+    const active = !navigator.userActivation || navigator.userActivation.isActive; // sin un clic o una tecla reciente el navegador no deja
+    lockAskT = performance.now();
+    const fail = () => { if (active && navigator.userActivation && performance.now() - unlockT > 1500) lockBroken = true; }; // con gesto y aun así rechazado: esta vista no lo permite
+    try { const r = stage.requestPointerLock(); if (r && r.catch) r.catch(fail); } catch (e) { fail(); }
+  }
+  document.addEventListener('pointerlockerror', () => { if (navigator.userActivation && navigator.userActivation.isActive && performance.now() - unlockT > 1500) lockBroken = true; });
+  document.addEventListener('pointerlockchange', () => {
+    if (locked()) return;
+    unlockT = performance.now();
+    if (wantLock()) setPaused(true); // lo ha soltado Escape (o el navegador): pausa con el ratón libre
+  });
 
   /* ---------- Sonido ---------- */
   let ac = null, master = null;
@@ -1495,7 +1517,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   addEventListener('keydown', e => {
     if (cap) return;
     if (e.code === 'Escape' || (e.code === 'KeyP' && scene === 'play' && !GAME_KEYS.has('KeyP'))) {
-      if (scene === 'play' && game.state !== 'over') { setPaused(!paused); e.preventDefault(); }
+      if (scene === 'play' && game.state !== 'over' && performance.now() - unlockT > 400) { setPaused(!paused); e.preventDefault(); }
       return;
     }
     if (scene === 'play' && !paused && GAME_KEYS.has(e.code)) { if (!e.repeat) tapped.add(e.code); keys.add(e.code); e.preventDefault(); }
@@ -2055,6 +2077,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.globalAlpha = 1;
     ctx.restore();
     drawHud(g);
+    if (wantLock() && !locked() && performance.now() - lockAskT > 600) text('Haz clic en la pista para bloquear el ratón', 480, 132, `700 15px ${FL}`, PAPER, INK, 4);
     if (net.role === 'g' && scene === 'play' && net.rtt > 0) text('retardo ' + Math.round(net.rtt * 500) + ' ms', 480, 108, `700 13px ${FL}`, net.rtt > 0.6 ? '#FFB1A6' : PAPER, INK, 4);
     if (g.state === 'point' && g.lastPoint) {
       const T = TEAM[g.lastPoint.team], a = clamp((1.9 - g.stateT) * 5, 0, 1);
@@ -2185,6 +2208,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   let lastTouch = 0;
   addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') lastTouch = performance.now(); }, true);
   stage.addEventListener('mousedown', e => {
+    if (!cap && wantLock() && !locked() && !e.target.closest('#hud, #tut, .pad')) { lockMouse(); e.preventDefault(); return; } // este clic solo vuelve a atrapar el ratón
     const code = 'Mouse' + e.button;
     if (cap || scene !== 'play' || paused || !GAME_KEYS.has(code) || performance.now() - lastTouch < 800 || e.target.closest('#hud, #tut, .pad')) return;
     keys.add(code); tapped.add(code); e.preventDefault();
@@ -2556,7 +2580,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 14; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 15; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -2640,7 +2664,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0 });
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
     $('#lobby').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
-    buildPads(); audioInit(); resize();
+    buildPads(); audioInit(); resize(); lockMouse();
   }
 
   /* --- Anfitrión --- */
@@ -3000,6 +3024,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (demo && game.state === 'over') { demoOverT += dt; if (demoOverT > 2.5) startDemo(); }
       for (const a of abilBtns) { const rdy = a.p.cd <= 0; if (a.b._r !== rdy) { a.b._r = rdy; a.b.classList.toggle('ready', rdy); } }
     }
+    if (locked() && !wantLock()) document.exitPointerLock(); // fin del partido, menú, sala…
     draw();
     requestAnimationFrame(frame);
   }
