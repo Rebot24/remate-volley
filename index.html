@@ -461,6 +461,8 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
   .card table.keys td { padding-block: 1px; }
   .card .keycap { padding: 1px 8px; font-size: 13px; }
 }
+/* En móviles y tabletas el difuminado de fondo de los menús sale caro (se repinta con cada fotograma del partido de fondo) */
+@media (pointer: coarse) { .layer { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(21, 33, 63, .9); } }
 </style>
 </head>
 <body>
@@ -1532,7 +1534,7 @@ const VB = (() => {
   }
 
   return { W, H, GROUND, NETX, NET_TOP, NET_H, BALL_R, WALL, CEIL, WALL_H, DIVE_T, G, CHARS, DIFF,
-    createGame, feed, update, predict, movePlayer, restartPoint, netApply, netRefState, netRally, netRef, netPoint, netPl, netSetPl, netAbility, step, zone, dirOf, sideOf, apexOf, speedOf, STEP };
+    createGame, feed, update, predict, movePlayer, restartPoint, stepBall, puppet, netApply, netRefState, netRally, netRef, netPoint, netPl, netSetPl, netAbility, step, zone, dirOf, sideOf, apexOf, speedOf, STEP };
 })();
 if (typeof module !== 'undefined') module.exports = VB;
 </script>
@@ -1631,6 +1633,11 @@ if (typeof module !== 'undefined') module.exports = VB;
   const padsSeen = new Set();
 
   /* ---------- Estado de la app ---------- */
+  const perf = { tick: 0, draw: 0 };
+  // Calidad automática: si el dispositivo no llega a unos 50 fotogramas por segundo durante un rato, se baja la resolución del lienzo
+  // (y se quitan los halos difuminados, que son lo más caro de pintar). Dos escalones como mucho.
+  const QSCALE = [1, 0.78, 0.6];
+  let qLevel = 0, slowT = 0;
   let game = null, demo = true, paused = false, scene = 'menu', S = 1, last = 0, demoOverT = 0, shake = 0, clock = 0;
   const fx = { pops: [], parts: [], streaks: [], rings: [], bursts: [], trail: [], winds: [] };
   // Sensación de impacto: pausa breve en los golpes fuertes (solo sin online), acercamiento de cámara y deformaciones
@@ -2241,7 +2248,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const DARK = { skin: '#1B1B26', hair: '#0D0D15' };
   function drawChar(c, o) {
     const h = o.ch.h, T = TEAM[o.team], f = o.face, L = o.shadow ? Object.assign({}, LOOK[o.ch.id], DARK) : LOOK[o.ch.id];
-    if (o.shadow) { c.save(); c.shadowColor = T.c; c.shadowBlur = 9; } // Sombra: todo negro con un halo del color de su equipo
+    if (o.shadow) { c.save(); if (!qLevel) { c.shadowColor = T.c; c.shadowBlur = 9; } } // Sombra: todo negro con un halo del color de su equipo
     const hr = h * 0.165, headY = -h + hr, neckY = -h + 2 * hr - 2, hipY = -h * 0.36, tw = h * 0.17 * L.wf;
     const lw = h * 0.085, aw = h * 0.074;
     c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = 2.5;
@@ -2306,7 +2313,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       c.restore();
     }
     c.lineWidth = 2.5; c.strokeStyle = INK; shirt(); c.stroke();
-    if (kit === 'neon') { c.save(); c.shadowColor = T.c; c.shadowBlur = 8; c.strokeStyle = T.c; c.lineWidth = 1.6; shirt(); c.stroke(); c.restore(); }
+    if (kit === 'neon') { c.save(); if (!qLevel) { c.shadowColor = T.c; c.shadowBlur = 8; } c.strokeStyle = T.c; c.lineWidth = 1.6; shirt(); c.stroke(); c.restore(); }
     c.fillStyle = kit === 'oro' ? '#E89B00' : kit === 'sombra' ? T.c : kit === 'noel' ? PAPER : T.d; c.fillRect(-tw + 2.5, hipY - h * 0.1, tw * 2 - 5, 3);
     // Cabeza
     const bob = o.pose === 'sad' ? 3 : 0;
@@ -2553,7 +2560,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (zoom.k > 0) { const z = 1 + zoom.k, fxp = lerp(480, zoom.x, 0.6), fyp = lerp(270, zoom.y, 0.6); ctx.translate(fxp, fyp); ctx.scale(z, z); ctx.translate(-fxp, -fyp); }
     ctx.drawImage(bg, 0, 0, W, H);
     drawCrowd(); drawAmbient();
-    const b = g.ball, env = g.env;
+    const env = g.env, b = ballOff.x || ballOff.y ? Object.assign({}, g.ball, { x: g.ball.x + ballOff.x, y: g.ball.y + ballOff.y }) : g.ball; // online: el salto tras un golpe ajeno se suaviza
     // Gravedad lunar
     if (env.slowT > 0) {
       const x0 = env.slowTeam === 0 ? 0 : NETX;
@@ -3265,7 +3272,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 22; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 23; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3434,6 +3441,42 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
     net.seenAb[pe.peer] = seen;
   }
+  // Lo que tarda en llegar un aviso del jugador i (estimado a partir de las idas y vueltas medidas)
+  function lagOf(i) {
+    const own = id => { const pe = peerOf(id), v = pe && pe.presence && pe.presence.lt; return typeof v === 'number' && v > 0 && v < 3000 ? v / 1000 : 0; };
+    const half = rt => clamp((rt - 0.03) / 2, 0, 0.25);
+    if (net.role === 'h') return half(own(net.ctrl[i]));
+    const c = net.ctrl[i];
+    return half(net.rtt || 0) + (c && c !== myPeer() ? half(own(c)) : 0); // de otro invitado: pasa por el anfitrión
+  }
+  // Jugador de otro dispositivo: lo coloco donde estará ahora, no donde estaba cuando lo mandó
+  function setRemotePl(g, i, a) {
+    VB.netSetPl(g, i, a);
+    const p = g.players[i], lag = Math.min(0.12, lagOf(i) * LAGX);
+    if (p && lag > 0.008) for (let t = 0; t < lag; t += VB.STEP) VB.puppet(g, p, Math.min(VB.STEP, lag - t));
+  }
+  // Golpe de otro dispositivo. El balón no vuelve atrás hasta el punto del golpe: sigue desde donde estaría ya
+  // (lo que tardó el aviso se calcula buscando en mi pantalla cuándo pasó el balón por ese punto) y el salto se suaviza.
+  const ballHist = [];
+  function netHit(g, h) {
+    const b = g.ball, sx = b.x, sy = b.y, was = !b.held && !b.hidden && g.state === 'rally', on = h.on;
+    if (!VB.netApply(g, h)) return false;
+    if (h.kind === 'fault' || !Array.isArray(h.b)) return true;
+    let late = -1, best = 1e9;
+    for (const e of ballHist) { if (e.bid !== on) continue; const d = Math.hypot(e.x - h.b[0], e.y - h.b[1]); if (d < best) { best = d; late = g.time - e.t; } }
+    if (best > 45) late = lagOf(h.by); // no lo encuentro (venía de lejos): uso la estimación de la red
+    catchUp = clamp(late, 0, 0.3) * FFK;
+    if (was) { ballOff.x = clamp(sx - b.x, -160, 160); ballOff.y = clamp(sy - b.y, -160, 160); }
+    return true;
+  }
+  // Recupera el tiempo perdido sin saltos: durante unas décimas el balón va algo más deprisa hasta ponerse al día
+  function catchUpBall(g, dt) {
+    if (catchUp <= 0 || g.state !== 'rally' || g.landed || g.ball.held) { catchUp = 0; return; }
+    const b = g.ball; let extra = Math.min(catchUp, dt * CUR); catchUp -= extra;
+    while (extra > 1e-4 && b.y + BALL_R < GROUND - 2) { const h = Math.min(VB.STEP, extra); VB.stepBall(b, g.env, h, false); extra -= h; }
+  }
+  const ballOff = { x: 0, y: 0 }, LAGX = window.RV_LAGX != null ? +window.RV_LAGX : 0.5, FFK = window.RV_FFK != null ? +window.RV_FFK : 1, CUR = window.RV_CUR != null ? +window.RV_CUR : 0.6;
+  let catchUp = 0;
   function hostSync() {
     const g = game;
     if (net.headR !== g.rally) { net.head = null; net.headR = g.rally; }
@@ -3442,10 +3485,10 @@ if (typeof module !== 'undefined') module.exports = VB;
       const pe = peerOf(net.ctrl[p.i]), pr = pe && pe.presence;
       if (!pr) continue;
       const a = pr.pl && pr.pl[p.i];
-      if (a && a !== net.seenPl[p.i]) { net.seenPl[p.i] = a; VB.netSetPl(g, p.i, a); }
+      if (a && a !== net.seenPl[p.i]) { net.seenPl[p.i] = a; setRemotePl(g, p.i, a); }
       if (Array.isArray(pr.h)) for (const h of pr.h) { // golpes que propone: valen si son sobre el balón que yo tengo
         if (!h || h.r !== g.rally || h.by !== p.i || h.on !== g.bid || g.chain.includes(h.id)) continue;
-        if (g.state === 'rally' ? h.kind !== 'serve' : (g.state === 'serve' && h.kind === 'serve' && g.server === p)) { if (VB.netApply(g, h)) net.head = h; }
+        if (g.state === 'rally' ? h.kind !== 'serve' : (g.state === 'serve' && h.kind === 'serve' && g.server === p)) { if (netHit(g, h)) net.head = h; }
       }
       takeAbilities(g, pe, true);
     }
@@ -3517,7 +3560,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const pe = peerOf(net.ctrl[p.i]);
       const src = pe && pe.presence.pl && pe.presence.pl[p.i] ? pe.presence : pr;
       const a = src.pl && src.pl[p.i];
-      if (a && a !== net.seenPl[p.i]) { net.seenPl[p.i] = a; VB.netSetPl(g, p.i, a); }
+      if (a && a !== net.seenPl[p.i]) { net.seenPl[p.i] = a; setRemotePl(g, p.i, a); }
     }
     for (const pe of others) takeAbilities(g, pe, false);
     if (g.state !== 'serve' && g.state !== 'rally') return;
@@ -3526,7 +3569,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     for (const pe of others) if (pe !== hp && Array.isArray(pe.presence.h)) for (const h of pe.presence.h) if (h && h.r === g.rally) cands.push(h);
     for (const c of cands) { // golpes de otros sobre el balón que yo tengo
       const p = g.players[c.by];
-      if (p && p.remote && c.on === g.bid && typeof c.id === 'string' && !g.chain.includes(c.id)) VB.netApply(g, c);
+      if (p && p.remote && c.on === g.bid && typeof c.id === 'string' && !g.chain.includes(c.id)) netHit(g, c);
     }
     if (head && !g.chain.includes(head.id)) VB.netApply(g, head); // voy por otro camino: manda el anfitrión
     const hid = head ? head.id : 'r' + g.rally;
@@ -3638,7 +3681,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     g.net.out.length = 0; g.net.abOut.length = 0;
     net.sendT -= dt;
     if (!hot && net.sendT > 0) return;
-    net.sendT = net.sala.slow && net.sala.slow() ? 0.07 : 0.05; // por el servidor de reserva, algo menos de tráfico
+    net.sendT = net.sala.slow && net.sala.slow() ? 0.06 : 0.033; // por el servidor de reserva, algo menos de tráfico
     const pl = {};
     for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
     const patch = { pl, ab: net.abs.slice() };
@@ -3648,7 +3691,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const pg = {};
       for (const p of net.sala.peers()) if (!p.sameTab && p.presence && typeof p.presence.pt === 'number') pg[p.peer] = p.presence.pt;
       patch.pg = pg;
-    } else { patch.h = net.props.slice(); patch.ld = g.landed ? g.landed.bid : ''; patch.pt = Math.round(performance.now()) % 1e9; }
+    } else { patch.h = net.props.slice(); patch.ld = g.landed ? g.landed.bid : ''; patch.pt = Math.round(performance.now()) % 1e9; patch.lt = Math.round((net.rtt || 0) * 1000); }
     net.sala.presence(patch).catch(() => {});
   }
 
@@ -3717,7 +3760,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : seated ? 'Elige personaje y sitio. El anfitrión empieza el partido.' : 'No quedan huecos: verás el partido como espectador.';
     fitMenu();
   }
-  window.rvDebug = () => ({ game, net, scene, labels, fx, freeze, zoom, setCourt: id => { court = id; renderBg(); } });
+  window.rvDebug = () => ({ game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
 
   /* ---------- Estadísticas ---------- */
   // Por jugador: puntos, saques directos, remates, colocaciones, recepciones, planchas y fallos
@@ -4035,8 +4078,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     fitMenu();
     const r = cv.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const sc = Math.min(r.width / W, r.height / H), dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-    const bw = clamp(Math.round(W * sc * dpr), 480, 1920);
+    const sc = Math.min(r.width / W, r.height / H), dpr = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2);
+    const bw = clamp(Math.round(W * sc * dpr * QSCALE[qLevel]), 480, coarse ? 1280 : 1920);
     if (cv.width !== bw || !bg.width) { cv.width = bw; cv.height = Math.round(bw * H / W); S = bw / W; renderBg(); }
     const sr = stage.getBoundingClientRect(), ch = H * sc;
     hud.style.setProperty('--hb', clamp(ch * 0.055, 20, 32) + 'px');
@@ -4050,9 +4093,16 @@ if (typeof module !== 'undefined') module.exports = VB;
   function frame(ts) {
     const dt = Math.min(0.05, (ts - last) / 1000 || 0);
     last = ts;
+    const t0 = performance.now();
+    if (dt > 0 && scene === 'play' && !paused && !document.hidden && qLevel < 2) {
+      slowT = dt > 0.021 ? slowT + dt : Math.max(0, slowT - dt * 0.5);
+      if (slowT > 2.5) { qLevel++; slowT = 0; resize(); }
+    }
     tick(dt);
     if (locked() && !wantLock()) document.exitPointerLock(); // fin del partido, menú, sala…
+    const t1 = performance.now();
     draw();
+    const t2 = performance.now(); perf.tick += (t1 - t0 - perf.tick) * 0.05; perf.draw += (t2 - t1 - perf.draw) * 0.05;
     requestAnimationFrame(frame);
   }
   // Un paso de juego sin dibujar (el bucle normal lo dibuja después; en segundo plano no hace falta)
@@ -4067,7 +4117,13 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (freeze > 0 && !net.sala) { freeze -= dt; sdt = 0; } // pausa de impacto
       if (net.handover) sdt = 0; // mientras se cambia de anfitrión, el partido espera
       VB.update(game, sdt);
-      if (online) netPublish(dt);
+      if (online) {
+        const b = game.ball;
+        ballHist.push({ t: game.time, x: b.x, y: b.y, bid: game.bid }); while (ballHist.length && game.time - ballHist[0].t > 0.6) ballHist.shift();
+        catchUpBall(game, sdt);
+        const k = Math.exp(-dt / 0.1); ballOff.x *= k; ballOff.y *= k;
+        netPublish(dt);
+      } else ballOff.x = ballOff.y = 0;
       handleEvents(); updateFx(dt);
       if (tut) updateTut(dt);
       if (demo && game.state === 'over') { demoOverT += dt; if (demoOverT > 2.5) startDemo(); }
