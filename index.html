@@ -2272,7 +2272,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     // Equipación: el color del equipo siempre manda; cambia el estilo
     const kit = o.shadow ? 'sombra' : o.kit || 'clasica', GOLD = '#FFC83A', NEON = '#141B33';
     c.lineWidth = 2.5; c.strokeStyle = INK;
-    c.fillStyle = kit === 'sombra' ? '#101018' : kit === 'retro' ? T.d : kit === 'oro' ? GOLD : kit === 'neon' ? NEON : PAPER;
+    c.fillStyle = kit === 'sombra' ? '#101018' : kit === 'retro' ? T.d : kit === 'oro' ? GOLD : kit === 'neon' ? NEON : kit === 'noel' ? T.c : PAPER;
     c.beginPath(); c.roundRect(-tw, hipY - h * 0.1, tw * 2, h * 0.17, 5); c.fill(); c.stroke();
     const shirtH = hipY - neckY - h * 0.04, shirt = () => { c.beginPath(); c.roundRect(-tw, neckY, tw * 2, shirtH, [7, 7, 3, 3]); };
     c.fillStyle = kit === 'neon' ? NEON : kit === 'sombra' ? '#14141E' : T.c; shirt(); c.fill();
@@ -2285,6 +2285,10 @@ if (typeof module !== 'undefined') module.exports = VB;
       else if (kit === 'camuflaje') { // manchas en tonos del equipo
         const blobs = [[-0.6, 0.2, 0.42], [0.45, 0.35, 0.36], [-0.1, 0.7, 0.4], [0.7, 0.8, 0.3], [-0.75, 0.85, 0.28]];
         for (const [bx, by, br] of blobs) { c.fillStyle = by > 0.5 ? T.d : 'rgba(20,24,30,.35)'; c.beginPath(); c.ellipse(bx * tw, neckY + by * shirtH, br * tw, br * tw * 0.7, 0.6, 0, 7); c.fill(); }
+      } else if (kit === 'noel') { // traje de Papá Noel del color del equipo: pelo blanco abajo y en el centro, cinturón negro con hebilla
+        c.fillStyle = PAPER; c.fillRect(-tw, neckY + shirtH * 0.8, tw * 2, shirtH * 0.2); c.fillRect(-2, neckY, 4, shirtH * 0.62);
+        c.fillStyle = '#1A1A1A'; c.fillRect(-tw, neckY + shirtH * 0.6, tw * 2, Math.max(4, shirtH * 0.14));
+        c.fillStyle = GOLD; c.strokeStyle = INK; c.lineWidth = 1; c.beginPath(); c.rect(-4, neckY + shirtH * 0.6 - 1, 8, Math.max(4, shirtH * 0.14) + 2); c.fill(); c.stroke();
       } else if (kit === 'arcoiris') { // franja arcoíris en el pecho; el resto, del color del equipo
         const cols = ['#FF4D4D', '#FF9F1C', '#FFE14D', '#4CD964', '#3FA9F5', '#8E6CFF'], y0 = neckY + shirtH * 0.28, bh = shirtH * 0.07;
         cols.forEach((col, k) => { c.fillStyle = col; c.fillRect(-tw, y0 + k * bh, tw * 2, bh + 0.5); });
@@ -2293,13 +2297,26 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
     c.lineWidth = 2.5; c.strokeStyle = INK; shirt(); c.stroke();
     if (kit === 'neon') { c.save(); c.shadowColor = T.c; c.shadowBlur = 8; c.strokeStyle = T.c; c.lineWidth = 1.6; shirt(); c.stroke(); c.restore(); }
-    c.fillStyle = kit === 'oro' ? '#E89B00' : kit === 'sombra' ? T.c : T.d; c.fillRect(-tw + 2.5, hipY - h * 0.1, tw * 2 - 5, 3);
+    c.fillStyle = kit === 'oro' ? '#E89B00' : kit === 'sombra' ? T.c : kit === 'noel' ? PAPER : T.d; c.fillRect(-tw + 2.5, hipY - h * 0.1, tw * 2 - 5, 3);
     // Cabeza
     const bob = o.pose === 'sad' ? 3 : 0;
     c.save(); c.translate(f * 1.5, headY + bob); c.scale(f, 1);
     c.lineWidth = 2.5 ; hairBack(c, o.ch.id, hr, L);
     c.fillStyle = L.skin; c.strokeStyle = INK; c.beginPath(); c.arc(0, 0, hr, 0, 7); c.fill(); c.stroke();
     c.lineWidth = 2; hairFront(c, o.ch.id, hr, L);
+    if (kit === 'noel') { // barba, bigote y gorro de Papá Noel
+      c.fillStyle = PAPER; c.strokeStyle = INK; c.lineWidth = 1.6;
+      c.beginPath(); c.moveTo(-0.2 * hr, 0.15 * hr);
+      c.quadraticCurveTo(-0.25 * hr, 0.95 * hr, 0.25 * hr, 1.3 * hr); c.quadraticCurveTo(0.55 * hr, 1.05 * hr, 0.7 * hr, 1.25 * hr);
+      c.quadraticCurveTo(1.15 * hr, 0.85 * hr, 1.02 * hr, 0.2 * hr); c.quadraticCurveTo(0.45 * hr, 0.45 * hr, -0.2 * hr, 0.15 * hr); c.closePath(); c.fill(); c.stroke();
+      c.beginPath(); c.ellipse(0.45 * hr, 0.36 * hr, 0.24 * hr, 0.12 * hr, -0.2, 0, 7); c.ellipse(0.8 * hr, 0.34 * hr, 0.22 * hr, 0.11 * hr, 0.25, 0, 7); c.fill(); c.stroke();
+      c.lineWidth = 2; c.fillStyle = T.c;
+      c.beginPath(); c.moveTo(-0.98 * hr, -0.55 * hr); c.lineTo(0.98 * hr, -0.55 * hr);
+      c.quadraticCurveTo(0.7 * hr, -1.75 * hr, -0.45 * hr, -1.7 * hr); c.quadraticCurveTo(-1.2 * hr, -1.6 * hr, -1.45 * hr, -1.0 * hr);
+      c.quadraticCurveTo(-1.05 * hr, -1.05 * hr, -0.98 * hr, -0.55 * hr); c.closePath(); c.fill(); c.stroke();
+      c.fillStyle = PAPER; c.beginPath(); c.roundRect(-1.12 * hr, -0.78 * hr, 2.24 * hr, 0.36 * hr, 0.18 * hr); c.fill(); c.stroke();
+      c.beginPath(); c.arc(-1.45 * hr, -1.0 * hr, 0.24 * hr, 0, 7); c.fill(); c.stroke();
+    }
     c.fillStyle = INK; c.strokeStyle = INK; c.lineWidth = 1.6;
     if (o.stun) { c.beginPath(); c.moveTo(hr * 0.3, -hr * 0.2); c.lineTo(hr * 0.7, hr * 0.15); c.moveTo(hr * 0.7, -hr * 0.2); c.lineTo(hr * 0.3, hr * 0.15); c.stroke(); }
     else { if (o.shadow) c.fillStyle = T.l; c.beginPath(); c.arc(hr * 0.5, -hr * 0.02, hr * 0.15, 0, 7); c.fill(); }
@@ -3199,7 +3216,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 19; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 20; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3705,7 +3722,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     { id: 'noche', name: 'Noche', lvl: 6 }, { id: 'azotea', name: 'Azotea', lvl: 9 }, { id: 'nieve', name: 'Nieve', cup: true },
   ];
   const KITS = [
-    { id: 'clasica', name: 'Clásica', lvl: 1 }, { id: 'rayas', name: 'Rayas', lvl: 2 }, { id: 'retro', name: 'Retro', lvl: 4 },
+    { id: 'clasica', name: 'Clásica', lvl: 1 }, { id: 'noel', name: 'Papá Noel', lvl: 1 }, { id: 'rayas', name: 'Rayas', lvl: 2 }, { id: 'retro', name: 'Retro', lvl: 4 },
     { id: 'neon', name: 'Neón', lvl: 7 }, { id: 'camuflaje', name: 'Camuflaje', lvl: 10 }, { id: 'arcoiris', name: 'Arcoíris', lvl: 12 }, { id: 'oro', name: 'Oro', cup: true },
   ];
   const CUP = [
