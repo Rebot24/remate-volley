@@ -484,6 +484,23 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
   .layer.title { background: radial-gradient(ellipse at 50% 38%, #1C2B52, #15213F 70%); } /* en el móvil la portada tapa del todo el menú */
   .title-hint, .kb-only { display: none !important; } }
 .touch-only { display: none; } @media (pointer: coarse) { .touch-only { display: block; } .touch-only ul { margin: 0 0 12px; padding-left: 18px; } }
+/* ---------- Entrenar ---------- */
+.train-card { width: min(100%, 640px); }
+.train-card h2 { margin: 0; }
+.train-note { margin: 0; color: var(--muted); font-size: 14px; }
+.drill { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; padding: 10px 0; border-top: 1px solid var(--paper-2); }
+.drill h3 { margin: 0; font-size: 18px; color: var(--ink); }
+.drill p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.drill .lvs { display: flex; gap: 6px; }
+.lvb { display: grid; gap: 1px; min-width: 84px; padding: 6px 8px; border-radius: 12px; border: 2px solid var(--line); background: var(--paper-2); color: var(--ink); text-align: center; }
+.lvb b { font-size: 14px; } .lvb small { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.lvb.done { border-color: #2FB673; background: color-mix(in srgb, #2FB673 16%, var(--paper)); }
+.lvb.locked { opacity: .45; cursor: not-allowed; }
+.lvb:not(.locked):hover { border-color: var(--sun-deep); }
+@media (max-width: 560px) { .drill { grid-template-columns: 1fr; } .drill .lvs { justify-content: stretch; } .lvb { flex: 1; min-width: 0; } }
+/* Tutorial en el móvil: el botón que toca pulsar parpadea */
+.pad .hint { border-color: var(--sun) !important; animation: hintPulse 1s ease-in-out infinite; }
+@keyframes hintPulse { 50% { box-shadow: 0 0 0 5px rgba(255, 200, 58, .55); } }
 </style>
 </head>
 <body>
@@ -673,8 +690,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 
       <div class="go">
         <p id="goNote"></p>
-        <button type="button" class="btn ghost" id="btnTut">Tutorial</button>
-        <button type="button" class="btn ghost" id="btnFree">Juego libre</button>
+        <button type="button" class="btn ghost" id="btnTrain">Entrenar</button>
         <button type="button" class="btn" id="btnPlay">Jugar</button>
       </div>
     </div>
@@ -712,12 +728,26 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
     </div>
   </section>
 
+  <section id="train" class="layer card-layer" hidden aria-label="Entrenar">
+    <div class="card train-card">
+      <h2>Entrenar</h2>
+      <div class="row">
+        <button type="button" class="btn ghost" id="btnTut">Tutorial</button>
+        <button type="button" class="btn ghost" id="btnFree">Juego libre</button>
+      </div>
+      <p class="train-note">Cada prueba son 10 balones. Supera el mínimo de aciertos para abrir el nivel siguiente (y ganar XP la primera vez).</p>
+      <div id="drillList"></div>
+      <div class="row"><button type="button" class="btn" id="trainBack">Volver</button></div>
+    </div>
+  </section>
+
   <section id="pause" class="layer card-layer" hidden aria-label="Pausa">
     <div class="card">
       <h2>Pausa</h2>
       <div class="row">
         <button type="button" class="btn" id="btnResume">Seguir</button>
         <button type="button" class="btn ghost" id="btnRestart">Reiniciar</button>
+        <button type="button" class="btn ghost" id="btnTutSkip" hidden>Saltar paso</button>
         <button type="button" class="btn ghost" id="btnQuit">Menú</button>
       </div>
       <div class="keys-box kb-only" data-keys></div>
@@ -847,6 +877,9 @@ const VB = (() => {
     Object.assign(g.ball, { x: o.x, y: o.y, vx: o.vx, vy: o.vy, held: false, hidden: false, dead: false, fire: false, curve: 0, curveOn: false });
     g.state = 'rally'; g.touches = 0; g.lastHitter = null; g.lastTeam = -1; g.hitSeq++; g.rallyHits = 0; g.lastKind = 'feed'; g.pred = null;
   }
+
+  // Práctica: el jugador 0 saca desde su sitio (entrenamiento de saque)
+  function practiceServe(g) { g.serveTeam = 0; g.serveRot = [0, 0]; setupServe(g); }
 
   function emit(g, ev) { g.events.push(ev); }
   function placeHeld(g) {
@@ -1583,7 +1616,7 @@ const VB = (() => {
   }
 
   return { W, H, GROUND, NETX, NET_TOP, NET_H, BALL_R, WALL, CEIL, WALL_H, DIVE_T, G, CHARS, DIFF,
-    createGame, feed, update, predict, movePlayer, restartPoint, stepBall, puppet, netApply, netRefState, netRally, netRef, netPoint, netPl, netSetPl, netAbility, step, zone, dirOf, sideOf, apexOf, speedOf, STEP };
+    createGame, feed, practiceServe, update, predict, movePlayer, restartPoint, stepBall, puppet, netApply, netRefState, netRally, netRef, netPoint, netPl, netSetPl, netAbility, step, zone, dirOf, sideOf, apexOf, speedOf, STEP };
 })();
 if (typeof module !== 'undefined') module.exports = VB;
 </script>
@@ -1724,13 +1757,13 @@ if (typeof module !== 'undefined') module.exports = VB;
   function toMenu() {
     endTut();
     scene = 'menu'; paused = false; segPaints.forEach(f => f()); renderSlots();
-    $('#lobby').hidden = true; $('#menu').hidden = false; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = true;
+    $('#lobby').hidden = true; $('#train').hidden = true; $('#menu').hidden = false; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = true;
     clearPads(); startDemo(); resize();
   }
   function setPaused(v) {
     if (scene !== 'play' || game.state === 'over') return;
     paused = v; $('#pause').hidden = !v;
-    $('#btnRestart').hidden = !!net.sala; $('#btnQuit').textContent = net.sala ? 'Salir de la sala' : 'Menú';
+    $('#btnRestart').hidden = !!net.sala; $('#btnTutSkip').hidden = !tut; if (tut) $('#btnTutSkip').textContent = $('#tutSkip').textContent; $('#btnQuit').textContent = net.sala ? 'Salir de la sala' : 'Menú';
     $('#pause h2').textContent = net.sala ? 'El partido sigue' : 'Pausa';
     if (v) $('#btnResume').focus(); else lockMouse();
   }
@@ -1741,7 +1774,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const canLock = !coarse && typeof Element !== 'undefined' && 'requestPointerLock' in Element.prototype;
   let lockBroken = false, lockAskT = 0, unlockT = -1e9;
   const locked = () => !!document.pointerLockElement;
-  const wantLock = () => canLock && !lockBroken && scene === 'play' && !paused && !tut && !demo && !!game && game.state !== 'over' && $('#end').hidden;
+  const wantLock = () => canLock && !lockBroken && scene === 'play' && !paused && !demo && !!game && game.state !== 'over' && $('#end').hidden;
   function lockMouse() {
     if (!wantLock() || locked()) return;
     const active = !navigator.userActivation || navigator.userActivation.isActive; // sin un clic o una tecla reciente el navegador no deja
@@ -3173,36 +3206,42 @@ if (typeof module !== 'undefined') module.exports = VB;
   };
   const MARKS = [110, 390];
   const TUT = [
-    { id: 'move', title: 'Muévete', need: 2, msg: k => `Usa ${k.move} para llegar a las dos marcas del suelo.` },
-    { id: 'jump', title: 'Salta', need: 2, msg: k => `Pulsa ${k.jump} para saltar. En el aire, ${k.down} te hace caer antes.` },
-    { id: 'bump', title: 'Recibir', need: 3, zone: 'bump', feed: 'bump', msg: k => `Ponte bajo el balón y pulsa ${k.bump} cuando entre en la zona punteada. Sale alto y casi vertical.` },
-    { id: 'set', title: 'Colocar', need: 3, zone: 'set', feed: 'set', msg: k => `Pulsa ${k.set} para mandarlo hacia la red. Si lo dejas caer más antes de tocarlo, sale más alto.` },
-    { id: 'spike', title: 'Rematar', need: 2, zone: 'spike', feed: 'spike', msg: k => `Ve a la marca junto a la red, salta con ${k.jump} y pulsa ${k.spike} en el aire con el balón sobre la cabeza. Tiene que caer al otro lado.` },
-    { id: 'combo', title: 'Jugada completa', need: 2, feed: 'combo', msg: () => 'Llega un saque. Recibe, coloca y remata: tienes hasta 4 toques y las paredes rebotan. Haz que caiga en el campo rival.' },
-    { id: 'dive', title: 'Plancha', need: 2, zone: 'dig', feed: 'dive', msg: k => `Balón bajo y lejos: muévete hacia él y pulsa ${k.down} para lanzarte. Después tardas en levantarte.` },
-    { id: 'abil', title: 'Habilidad', need: 1, feed: 'bump', msg: (k, ch) => `${ch.ab.name}: ${ch.ab.desc} Pulsa ${k.ability} con el balón en juego.` },
+    { id: 'move', title: 'Muévete', need: 2, key: ['l', 'r'], msg: k => `Usa ${k.move} para llegar a las dos marcas del suelo.` },
+    { id: 'jump', title: 'Salta', need: 2, key: 'jump', msg: k => `Pulsa ${k.jump} para saltar. En el aire, ${k.down} te hace caer antes.` },
+    { id: 'bump', title: 'Recibir', need: 3, zone: 'bump', feed: 'bump', key: 'bump', tip: 'Mira la sombra del balón en el suelo y ponte encima antes de que baje.', msg: k => `Ponte bajo el balón y pulsa ${k.bump} cuando entre en la zona punteada. Sale alto y casi vertical.` },
+    { id: 'set', title: 'Colocar', need: 3, zone: 'set', feed: 'set', key: 'set', tip: 'Pulsa cuando el balón esté sobre tu cabeza: la zona se pone verde.', msg: k => `Pulsa ${k.set} para mandarlo hacia la red. Si lo dejas caer más antes de tocarlo, sale más alto.` },
+    { id: 'spike', title: 'Rematar', need: 2, zone: 'spike', feed: 'spike', key: ['jump', 'spike'], tip: 'Salta un poco antes de que llegue y golpéalo arriba, cuando la zona se ponga verde.', msg: k => `Ve a la marca junto a la red, salta con ${k.jump} y pulsa ${k.spike} en el aire con el balón sobre la cabeza. Tiene que caer al otro lado.` },
+    { id: 'combo', title: 'Jugada completa', need: 2, feed: 'combo', key: ['bump', 'set', 'spike'], tip: 'Recibe alto, coloca cerca de la red y salta para rematar el siguiente.', msg: () => 'Llega un saque. Recibe, coloca y remata: tienes hasta 4 toques y las paredes rebotan. Haz que caiga en el campo rival.' },
+    { id: 'dive', title: 'Plancha', need: 2, zone: 'dig', feed: 'dive', key: 'down', tip: 'Corre hacia donde va a caer y lánzate cuando esté cerca del suelo.', msg: k => `Balón bajo y lejos: muévete hacia él y pulsa ${k.down} para lanzarte. Después tardas en levantarte.` },
+    { id: 'abil', title: 'Habilidad', need: 1, feed: 'bump', key: 'ability', msg: (k, ch) => `${ch.ab.name}: ${ch.ab.desc} Pulsa ${k.ability} con el balón en juego.` },
   ];
   let tut = null;
-  function endTut() { tut = null; $('#tut').hidden = true; stage.classList.remove('tut'); }
+  // En el móvil, el botón que toca pulsar parpadea
+  function tutHint(k) {
+    document.querySelectorAll('.pad .hint').forEach(x => x.classList.remove('hint'));
+    for (const q of [].concat(k || [])) document.querySelectorAll(`.pad [data-k="${q}"]`).forEach(x => x.classList.add('hint'));
+  }
+  function endTut() { tutHint(null); if (game && game.env) game.env.slowT = 0; tut = null; $('#tut').hidden = true; stage.classList.remove('tut'); }
   // Juego libre: solo en la pista, te van lanzando balones cada vez que uno toca el suelo
   const FREE_KINDS = [['mix', 'Variados'], ['bump', 'Para recibir'], ['set', 'Para colocar'], ['spike', 'Para rematar'], ['combo', 'Saques del rival'], ['dive', 'Para la plancha']];
   function startFree() { startTutorial(true); }
-  function startTutorial(free) {
-    free = free === true;
+  function startTutorial(free, drill) {
+    free = free === true; $('#train').hidden = true;
     const i = activeSlots().find(k => cfg.slots[k].control !== 'bot');
     const s = i != null ? cfg.slots[i] : { char: cfg.slots[0].char, control: coarse ? 'touch1' : 'kb1' };
     game = VB.createGame({ mode: 1, rules: 'chance', points: 0, practice: true, difficulty: 'normal', firstServe: 0, slots: [{ team: 0, char: s.char, control: s.control }] });
     game.players[0].x = NETX - 250;
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear(); labels = ['J1'];
     const dev = s.control;
-    tut = { free, kind: 0, hits: 0, good: 0, streak: 0, best: 0, last: '', i: 0, count: 0, okT: 0, feedT: 0.7, armed: false, touched: false, marks: [false, false], spot: 0, k: KB[dev] ? keysText(dev) : (dev.startsWith('touch') ? KEYS.touch : KEYS.pad) };
+    tut = { free, drill: drill ? { d: DRILLS.find(q => q.id === drill.id), lv: drill.lv, n: 0, ok: 0, done: false, okBall: false, kind: '', power: false, watch: false } : null, fails: 0, slow: false, ballOk: false, kind: 0, hits: 0, good: 0, streak: 0, best: 0, last: '', i: 0, count: 0, okT: 0, feedT: 0.7, armed: false, touched: false, marks: [false, false], spot: 0, k: KB[dev] ? keysText(dev) : (dev.startsWith('touch') ? KEYS.touch : KEYS.pad) };
     $('#menu').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
     $('#tut').hidden = false; stage.classList.add('tut');
-    buildPads(); audioInit(); paintTut(); resize(); requestAnimationFrame(resize);
+    buildPads(); audioInit(); paintTut(); resize(); requestAnimationFrame(resize); lockMouse();
   }
   function paintTut() {
     const st = TUT[tut.i], p = game.players[0];
     requestAnimationFrame(resize); // el texto cambia la altura de la barra
+    if (tut.drill) { paintDrill(); return; }
     if (tut.free) {
       $('#tut').classList.remove('ok');
       $('#tutN').textContent = 'Juego libre';
@@ -3215,17 +3254,19 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (!st) {
       $('#tutN').textContent = 'Tutorial completado';
       $('#tutTitle').textContent = 'Ya tienes lo básico';
-      $('#tutMsg').textContent = 'En el menú eliges personaje, reglas y rivales. Empieza contra bots en Fácil.';
+      $('#tutMsg').textContent = 'Practica cada golpe en Entrenar (tres niveles por golpe) o juega un partido contra bots en Fácil.';
+      tutHint(null);
       $('#tutSkip').textContent = 'Jugar partido';
       return;
     }
     $('#tutN').textContent = `Paso ${tut.i + 1} de ${TUT.length}`;
     $('#tutTitle').textContent = st.title + (st.need > 1 ? ` · ${tut.count} de ${st.need}` : '');
-    $('#tutMsg').textContent = tut.okT > 0 ? '¡Bien hecho!' : st.msg(tut.k, p.ch);
+    $('#tutMsg').textContent = tut.okT > 0 ? '¡Bien hecho!' : st.msg(tut.k, p.ch) + (tut.fails && st.tip ? ' Consejo: ' + st.tip : '') + (tut.slow ? ' Te lo ponemos a cámara lenta.' : '');
+    tutHint(tut.okT > 0 ? null : st.key);
     $('#tutSkip').textContent = 'Saltar paso';
   }
   function nextStep() {
-    tut.i++; tut.count = 0; tut.okT = 0; tut.marks = [false, false]; tut.armed = tut.touched = false; tut.feedT = 0.7; tut.spot = 0;
+    tut.i++; tut.fails = 0; tut.slow = false; tut.ballOk = false; game.env.slowT = 0; tut.count = 0; tut.okT = 0; tut.marks = [false, false]; tut.armed = tut.touched = false; tut.feedT = 0.7; tut.spot = 0;
     game.ball.hidden = true; game.state = 'idle';
     const st = TUT[tut.i];
     if (st && st.id === 'abil') game.players[0].cd = 0;
@@ -3233,11 +3274,12 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   function tutProgress() {
     const st = TUT[tut.i];
-    tut.count++;
+    tut.count++; tut.ballOk = true;
     if (tut.count >= st.need) { tut.okT = 1.3; tone(660, 990, 0.25, 'triangle', 0.3); } else tone(660, 700, 0.1, 'triangle', 0.25);
     paintTut();
   }
   function tutEvent(e) {
+    if (tut.drill) { drillEvent(e); return; }
     if (tut.free) {
       if (e.type === 'hit') { tut.hits++; tut.touched = true; paintTut(); }
       else if (e.type === 'land') {
@@ -3247,7 +3289,14 @@ if (typeof module !== 'undefined') module.exports = VB;
       return;
     }
     const st = TUT[tut.i];
-    if (e.type === 'land') { const over = e.x > NETX, a = tut.armed, t = tut.touched; tut.armed = tut.touched = false; tut.feedT = 0.9; if (st && tut.okT <= 0 && over && ((st.id === 'spike' && a) || (st.id === 'combo' && t))) tutProgress(); return; }
+    if (e.type === 'land') {
+      const over = e.x > NETX, a = tut.armed, t = tut.touched; tut.armed = tut.touched = false; tut.feedT = 0.9;
+      if (st && tut.okT <= 0 && over && ((st.id === 'spike' && a) || (st.id === 'combo' && t))) tutProgress();
+      // balón perdido: un consejo y, al segundo fallo, cámara lenta
+      if (st && st.feed && st.id !== 'abil' && tut.okT <= 0 && !tut.ballOk) { tut.fails++; if (tut.fails >= 2) tut.slow = true; paintTut(); }
+      tut.ballOk = false;
+      return;
+    }
     if (e.type === 'hit') { tut.touched = true; if (e.kind === 'spike') tut.armed = true; }
     if (!st || tut.okT > 0) return;
     if (e.type === 'jump' && st.id === 'jump') tutProgress();
@@ -3273,6 +3322,8 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   function updateTut(dt) {
     const st = TUT[tut.i], g = game, p = g.players[0];
+    if (tut.drill) { updateDrill(dt, g, p); return; }
+    if (tut.slow && g.state === 'rally') { g.env.slowTeam = 0; g.env.slowT = 0.3; } // cámara lenta en tu campo
     if (tut.free) {
       if (g.state === 'idle') { tut.feedT -= dt; if (tut.feedT <= 0) { const k = FREE_KINDS[tut.kind][0], kinds = ['bump', 'set', 'spike', 'combo', 'dive']; tut.last = k === 'mix' ? kinds[Math.floor(Math.random() * kinds.length)] : k; tut.spot = 0; tutFeed(tut.last, p); tut.feedT = 0.9; } }
       return;
@@ -3292,14 +3343,167 @@ if (typeof module !== 'undefined') module.exports = VB;
       ctx.fillStyle = done ? '#2FB673' : SUN; ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(x - 12, y); ctx.lineTo(x + 12, y); ctx.lineTo(x, y + 18); ctx.closePath(); ctx.fill(); ctx.stroke();
     };
+    if (tut.drill) { drawDrill(g, p, mark); return; }
     if (tut.free) { if (tut.spot) mark(tut.spot, Math.abs(p.x - tut.spot) < 26); return; }
     if (st.id === 'move') MARKS.forEach((x, i) => mark(x, tut.marks[i]));
     if (st.id === 'spike' && tut.spot) mark(tut.spot, Math.abs(p.x - tut.spot) < 26);
     if (st.zone) {
-      const z = VB.zone(p, st.zone);
-      ctx.fillStyle = 'rgba(255,200,58,.2)'; ctx.strokeStyle = '#E89B00'; ctx.lineWidth = 2.5; ctx.setLineDash([8, 7]);
+      const z = VB.zone(p, st.zone), b = g.ball, now = g.state === 'rally' && !b.hidden && Math.hypot((b.x - z.cx) / z.rx, (b.y - z.cy) / z.ry) <= 1;
+      ctx.fillStyle = now ? 'rgba(47,182,115,.32)' : 'rgba(255,200,58,.2)'; ctx.strokeStyle = now ? '#2FB673' : '#E89B00'; ctx.lineWidth = 2.5; ctx.setLineDash([8, 7]);
       ctx.beginPath(); ctx.ellipse(z.cx, z.cy, z.rx, z.ry, 0, 0, 7); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+      if (now) text('¡AHORA!', z.cx, z.cy - z.ry - 14, `700 22px ${FL}`, '#2FB673', INK, 4); // el balón está a tiro
     }
+  }
+
+  /* ---------- Entrenamientos: cinco golpes, tres niveles, 10 balones por prueba ---------- */
+  // Se supera con un mínimo de aciertos; la primera vez da XP y abre el nivel siguiente. El mejor resultado se guarda en el perfil.
+  const RIVAL_END = W - WALL - 8;
+  const DRILLS = [
+    { id: 'rec', name: 'Recepción', desc: 'Recibe los balones que llegan del campo rival.', key: 'bump', lv: [
+      { need: 7, msg: k => `Ponte bajo el balón y pulsa ${k.bump}. Cada recepción cuenta.` },
+      { need: 7, msg: k => `Caen más lejos y más rápido: muévete en cuanto salga y recibe con ${k.bump}.` },
+      { need: 6, msg: k => `Remates del rival: recibe con ${k.bump} o lánzate con ${k.down} si no llegas.` }] },
+    { id: 'col', name: 'Colocación', desc: 'Deja el balón alto junto a la red, dentro de la franja amarilla.', key: 'set', lv: [
+      { need: 7, z: [150, 30], msg: k => `Muévete bajo el balón y pulsa ${k.set}: sale hacia la red. Su punto más alto tiene que quedar dentro de la franja.` },
+      { need: 7, z: [130, 40], msg: k => `Franja más estrecha. Mantén ${k.move} hacia la red para mandarlo más lejos, o hacia atrás para dejarlo más cerca.` },
+      { need: 6, z: [115, 50], msg: k => `Balones lejanos y franja pequeña. Dirige la colocación hacia la red con ${k.move}.` }] },
+    { id: 'rem', name: 'Remate', desc: 'Remata para que caiga dentro de la zona marcada del campo rival.', key: ['jump', 'spike'], lv: [
+      { need: 7, msg: k => `Ponte en la marca, salta con ${k.jump} y remata con ${k.spike}. Vale cualquier sitio del campo rival.` },
+      { need: 6, msg: k => `Ahora tiene que caer en el fondo del campo rival (zona amarilla).` },
+      { need: 6, msg: k => `La zona cambia en cada balón: una vez corta y otra al fondo. Apunta con ${k.move} al rematar.` }] },
+    { id: 'pla', name: 'Plancha', desc: 'Salva balones bajos y lejanos lanzándote al suelo.', key: 'down', lv: [
+      { need: 6, msg: k => `Corre hacia el balón y pulsa ${k.down} para lanzarte antes de que toque el suelo.` },
+      { need: 6, msg: k => `Más lejos y más rápido: sal en cuanto lo veas venir.` },
+      { need: 5, msg: k => `Casi imposibles. Lánzate pronto con ${k.down}.` }] },
+    { id: 'saq', name: 'Saque', desc: 'Saca y haz que el balón caiga en el campo rival.', key: 'spike', lv: [
+      { need: 7, msg: k => `Saca con ${k.spike} (potente) o ${k.bump} (seguro). Tiene que caer en el campo rival.` },
+      { need: 7, msg: k => `Solo valen saques potentes con ${k.spike} que entren.` },
+      { need: 6, msg: k => `Saque potente a la zona marcada: cambia en cada balón. Apunta con ${k.move}.` }] },
+  ];
+  const trainRec = id => { const t = prof.train || (prof.train = {}); return t[id] || (t[id] = [0, 0, 0]); };
+  const drillOpen = (d, lv) => lv === 0 || trainRec(d.id)[lv - 1] >= d.lv[lv - 1].need;
+  function drillTarget(D) {
+    const d = D.d, lv = D.lv;
+    if (d.id === 'col') return [NETX - d.lv[lv].z[0], NETX - d.lv[lv].z[1]];
+    if (lv === 0 || (d.id === 'saq' && lv === 1)) return [NETX + 6, RIVAL_END];
+    if (lv === 1) return [NETX + 200, RIVAL_END];
+    return D.n % 2 ? [NETX + 30, NETX + 190] : [NETX + 240, RIVAL_END];
+  }
+  function openTrain() {
+    const list = $('#drillList'); list.replaceChildren();
+    for (const d of DRILLS) {
+      const row = document.createElement('div'); row.className = 'drill';
+      const info = document.createElement('div'); info.innerHTML = `<h3>${d.name}</h3><p>${d.desc}</p>`;
+      const lvs = document.createElement('div'); lvs.className = 'lvs';
+      d.lv.forEach((L, i) => {
+        const b = document.createElement('button'), best = trainRec(d.id)[i], open = drillOpen(d, i), done = best >= L.need;
+        b.type = 'button'; b.className = 'lvb' + (done ? ' done' : '') + (open ? '' : ' locked'); b.disabled = !open;
+        b.innerHTML = `<b>Nivel ${i + 1}</b><small>${!open ? 'Bloqueado' : best ? (done ? '✓ ' : '') + best + '/10' : 'Necesitas ' + L.need}</small>`;
+        b.addEventListener('click', () => startTutorial(false, { id: d.id, lv: i }));
+        lvs.append(b);
+      });
+      row.append(info, lvs); list.append(row);
+    }
+    $('#train').hidden = false;
+  }
+  function paintDrill() {
+    const D = tut.drill, d = D.d, L = d.lv[D.lv];
+    $('#tut').classList.toggle('ok', D.done && D.ok >= L.need);
+    $('#tutN').textContent = `${d.name} · Nivel ${D.lv + 1}`;
+    if (D.done) {
+      const ok = D.ok >= L.need;
+      $('#tutTitle').textContent = ok ? `¡Superado! ${D.ok} de 10` : `${D.ok} de 10: necesitas ${L.need}`;
+      $('#tutMsg').textContent = ok ? (D.xp ? `+${D.xp} XP. ` : '') + (D.lv < 2 ? 'Nivel ' + (D.lv + 2) + ' desbloqueado.' : '¡Has completado este entrenamiento!') : 'Casi. Inténtalo otra vez: los primeros balones son para coger el ritmo.';
+      $('#tutSkip').textContent = ok && D.lv < 2 ? 'Siguiente nivel' : 'Repetir';
+      tutHint(null);
+      return;
+    }
+    $('#tutTitle').textContent = `Balón ${Math.min(10, D.n + 1)} de 10 · Aciertos ${D.ok} (necesitas ${L.need})`;
+    $('#tutMsg').textContent = L.msg(tut.k);
+    $('#tutSkip').textContent = 'Empezar de nuevo';
+    tutHint(d.key);
+  }
+  function drillNext() {
+    const D = tut.drill, ok = D.done && D.ok >= D.d.lv[D.lv].need;
+    startTutorial(false, { id: D.d.id, lv: ok && D.lv < 2 ? D.lv + 1 : D.lv });
+  }
+  function drillGood(x, y) {
+    const D = tut.drill;
+    if (D.okBall || D.done) return;
+    D.okBall = true; D.ok++; pop(x, y - 30, '¡Bien!', '#2FB673', 24); tone(660, 880, 0.12, 'triangle', 0.25); paintTut();
+  }
+  function drillEvent(e) {
+    const D = tut.drill, d = D.d, b = game.ball;
+    if (D.done) return;
+    if (e.type === 'hit' && e.player === 0) {
+      D.kind = e.kind;
+      if (d.id === 'rec' && (e.kind === 'bump' || e.kind === 'dig')) drillGood(b.x, b.y);
+      if (d.id === 'pla' && e.kind === 'dig') drillGood(b.x, b.y);
+      D.watch = d.id === 'col' && e.kind === 'set';
+    } else if (e.type === 'serve') { D.kind = 'serve'; D.power = !!e.power; }
+    else if (e.type === 'land') {
+      if ((d.id === 'rem' && D.kind === 'spike') || (d.id === 'saq' && D.kind === 'serve' && (D.lv === 0 || D.power))) {
+        const [a, z] = drillTarget(D); if (e.x >= a && e.x <= z) drillGood(e.x, GROUND - 40);
+      }
+      if (!D.okBall) pop(e.x, GROUND - 60, 'Fallo', '#E5484D', 20);
+      D.n++; D.okBall = false; D.kind = ''; D.power = false; D.watch = false; tut.feedT = 0.9; tut.spot = 0;
+      if (D.n >= 10) finishDrill();
+      paintTut();
+    }
+  }
+  function finishDrill() {
+    const D = tut.drill, need = D.d.lv[D.lv].need, rec = trainRec(D.d.id), first = D.ok >= need && rec[D.lv] < need;
+    D.done = true;
+    if (D.ok > rec[D.lv]) rec[D.lv] = D.ok;
+    if (first) { D.xp = 40 + 30 * D.lv; prof.xp += D.xp; }
+    saveProf();
+    if (D.ok >= need) tone(660, 990, 0.3, 'triangle', 0.3); else tone(440, 330, 0.25, 'sine', 0.25);
+  }
+  function updateDrill(dt, g, p) {
+    const D = tut.drill;
+    if (D.watch && g.ball.vy >= 0) { // colocación: se mira dónde queda lo más alto del balón
+      D.watch = false;
+      const [a, z] = drillTarget(D), b = g.ball;
+      if (b.x >= a && b.x <= z && b.y < NET_TOP - 10) drillGood(b.x, b.y); else pop(b.x, b.y - 30, b.y >= NET_TOP - 10 ? 'Muy bajo' : 'Fuera de la franja', '#E5484D', 18);
+    }
+    if (D.done || g.state !== 'idle') return;
+    tut.feedT -= dt;
+    if (tut.feedT > 0) return;
+    tut.feedT = 0.9;
+    const r = (Math.random() - 0.5) * 2, lv = D.lv, id = D.d.id;
+    let o;
+    tut.spot = 0;
+    if (id === 'saq') { VB.practiceServe(g); return; }
+    if (id === 'rec') {
+      if (lv === 0) o = lob(770, 300, clamp(p.x + r * 45, 80, 400), 150);
+      else if (lv === 1) o = lob(800, 280, clamp(p.x + r * 140, 70, 420), 190);
+      else { const x0 = NETX + 70, y0 = NET_TOP - 70, xT = 90 + Math.random() * 310, T = 0.8; o = { x: x0, y: y0, vx: (xT - x0) / T, vy: (GROUND - BALL_R - y0 - 0.5 * VB.G * T * T) / T }; }
+    } else if (id === 'col') {
+      if (lv === 0) o = lob(770, 300, NETX - 150 - Math.random() * 60, 140);
+      else if (lv === 1) o = lob(800, 300, NETX - 130 - Math.random() * 80, 150);
+      else o = lob(820, 290, NETX - 120 - Math.random() * 110, 190);
+    } else if (id === 'rem') {
+      const xs = lv === 0 ? NETX - 72 : NETX - 55 - Math.random() * 45;
+      tut.spot = xs - 14;
+      o = lob(lv === 2 ? 220 : 300, 380, xs, lv === 2 ? 120 + Math.random() * 30 : 110);
+    } else {
+      const dist = [130, 185, 220][lv], T = [0.85, 0.68, 0.6][lv], dir = p.x > 250 ? -1 : 1, xT = clamp(p.x + dir * dist, 50, 440), x0 = Math.min(450, xT + 130);
+      o = { x: x0, y: 250, vx: (xT - x0) / T, vy: (GROUND - BALL_R - 250 - 0.5 * VB.G * T * T) / T };
+    }
+    VB.feed(g, o);
+  }
+  function drawDrill(g, p, mark) {
+    const D = tut.drill, id = D.d.id;
+    if (tut.spot) mark(tut.spot, Math.abs(p.x - tut.spot) < 26);
+    if (D.done) return;
+    const [a, z] = drillTarget(D);
+    ctx.save(); ctx.setLineDash([8, 7]); ctx.lineWidth = 2.5; ctx.strokeStyle = '#E89B00'; ctx.fillStyle = 'rgba(255,200,58,.22)';
+    if (id === 'col') { ctx.fillRect(a, NET_TOP - 170, z - a, 160); ctx.strokeRect(a, NET_TOP - 170, z - a, 160); }
+    else if (id === 'rem' || id === 'saq') {
+      ctx.fillStyle = 'rgba(255,200,58,.38)'; ctx.fillRect(a, GROUND - 4, z - a, 14); ctx.strokeRect(a, GROUND - 4, z - a, 14);
+      ctx.setLineDash([]); text('Aquí', (a + z) / 2, GROUND - 22, `700 16px ${FL}`, SUN, INK, 4);
+    }
+    ctx.restore();
   }
 
   /* ---------- Sala fuera de Claude: conexión directa entre navegadores, con un servidor de reserva ---------- */
@@ -3625,7 +3829,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 39; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 40; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4231,7 +4435,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     { id: 'online', t: 'Juega un partido online', n: 1, xp: 80 },
   ];
   let prof = null, run = null, lastCup = null;
-  const blankProf = () => ({ xp: 0, played: 0, won: 0, streak: 0, best: 0, aces: 0, spikes: 0, cups: 0, survBest: 0, chars: {}, court: 'pabellon', kit: 'clasica', cup: 0, daily: null });
+  const blankProf = () => ({ xp: 0, played: 0, won: 0, streak: 0, best: 0, aces: 0, spikes: 0, cups: 0, survBest: 0, chars: {}, court: 'pabellon', kit: 'clasica', cup: 0, daily: null, train: {} });
   const needXp = l => 200 + 100 * (l - 1) + 10 * (l - 1) * (l - 1); // cada nivel cuesta bastante más que el anterior
   function lvlOf(xp) { let l = 1; while (xp >= needXp(l)) { xp -= needXp(l); l++; } return { l, into: xp, need: needXp(l) }; }
   const isOpen = it => !!it && (it.cup ? prof.cups > 0 : lvlOf(prof.xp).l >= it.lvl);
@@ -4245,6 +4449,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         for (const k of ['xp', 'played', 'won', 'streak', 'best', 'aces', 'spikes', 'cups', 'cup', 'survBest']) if (Number.isFinite(o[k]) && o[k] >= 0) prof[k] = Math.floor(Math.min(o[k], 1e7));
         if (o.chars && typeof o.chars === 'object') for (const c of CHARS) { const v = o.chars[c.id]; if (v && Number.isFinite(v.p) && Number.isFinite(v.w)) prof.chars[c.id] = { p: v.p | 0, w: v.w | 0 }; }
         prof.court = validCourt(o.court); prof.kit = validKit(o.kit);
+        if (o.train && typeof o.train === 'object') for (const d of DRILLS) { const v = o.train[d.id]; if (Array.isArray(v)) prof.train[d.id] = [0, 1, 2].map(i => clamp(v[i] | 0, 0, 10)); }
         const d = o.daily;
         if (d && typeof d.day === 'string' && CHARS.some(c => c.id === d.ch) && Array.isArray(d.list) && d.list.length === 3 && d.list.every(x => x && DAILY.some(q => q.id === x.id)))
           prof.daily = { day: d.day, ch: d.ch, list: d.list.map(x => ({ id: x.id, p: Math.max(0, x.p | 0), done: !!x.done })) };
@@ -4610,11 +4815,14 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#btnSound').addEventListener('click', () => { cfg.sound = !cfg.sound; if (master) master.gain.value = cfg.sound ? 0.5 : 0; paintSound(); saveCfg(); });
     paintSound();
     $('#btnResume').addEventListener('click', () => setPaused(false));
-    $('#btnRestart').addEventListener('click', () => (tut ? startTutorial(tut.free) : startMatch(lastCup != null ? lastCup : undefined)));
+    $('#btnRestart').addEventListener('click', () => (tut ? startTutorial(tut.free, tut.drill && { id: tut.drill.d.id, lv: tut.drill.lv }) : startMatch(lastCup != null ? lastCup : undefined)));
     $('#btnTut').addEventListener('click', () => startTutorial());
     $('#btnFree').addEventListener('click', startFree);
-    $('#tutExit').addEventListener('click', toMenu);
-    $('#tutSkip').addEventListener('click', () => { if (!tut) return; if (tut.free) { tut.kind = (tut.kind + 1) % FREE_KINDS.length; paintTut(); return; } if (!TUT[tut.i]) startMatch(); else nextStep(); });
+    $('#tutExit').addEventListener('click', () => { const back = tut && (tut.drill || tut.free); toMenu(); if (back) openTrain(); });
+    $('#btnTrain').addEventListener('click', openTrain);
+    $('#trainBack').addEventListener('click', () => { $('#train').hidden = true; });
+    $('#btnTutSkip').addEventListener('click', () => { setPaused(false); $('#tutSkip').click(); });
+    $('#tutSkip').addEventListener('click', () => { if (!tut) return; if (tut.drill) { drillNext(); return; } if (tut.free) { tut.kind = (tut.kind + 1) % FREE_KINDS.length; paintTut(); return; } if (!TUT[tut.i]) startMatch(); else nextStep(); });
     const quit = () => (net.sala ? netLeave() : toMenu());
     $('#btnQuit').addEventListener('click', quit);
     $('#btnAgain').addEventListener('click', () => (net.role === 'h' ? hostStart(true) : net.sala ? null : startMatch(lastCup === 'surv' ? 'surv' : lastCup != null ? prof.cup : undefined, true)));
