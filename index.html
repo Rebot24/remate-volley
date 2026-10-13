@@ -2251,217 +2251,84 @@ if (typeof module !== 'undefined') module.exports = VB;
       c.strokeStyle = L.hair; c.lineWidth = 0.22 * r; c.beginPath(); c.moveTo(0.15 * r, -0.42 * r); c.lineTo(0.85 * r, -0.3 * r); c.stroke();
     }
   }
-  // Dibuja con el origen en los pies. o: {ch, team, face, run, speed, air, vy, pose, k, u, stun, kit, shadow, ph}
-  // Esqueleto sencillo: muslo, espinilla y rodilla; brazo, antebrazo y codo; tronco que se inclina y respira.
-  // Cada pose da dónde van pies y manos, y la cinemática inversa coloca rodillas y codos.
+  // Dibuja con el origen en los pies. o: {ch, team, face, run, speed, air, pose, k, stun}
   const DARK = { skin: '#1B1B26', hair: '#0D0D15' };
-  const ease = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
-  function ik(ax, ay, bx, by, l1, l2, pickFwd, stretch) { // codo o rodilla para dos huesos de largo l1 y l2 entre A y B
-    let dx = bx - ax, dy = by - ay, d = Math.hypot(dx, dy) || 1e-4;
-    if (stretch && d > l1 + l2) { const k = Math.min(stretch, d / (l1 + l2)); l1 *= k; l2 *= k; } // brazos de dibujo animado: estiran un poco
-    const max = l1 + l2 - 0.01;
-    if (d > max) { bx = ax + dx / d * max; by = ay + dy / d * max; dx = bx - ax; dy = by - ay; d = max; }
-    const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d), hh = Math.sqrt(Math.max(0, l1 * l1 - a * a));
-    const px = ax + dx / d * a, py = ay + dy / d * a, nx = -dy / d, ny = dx / d;
-    const j1 = [px + nx * hh, py + ny * hh], j2 = [px - nx * hh, py - ny * hh];
-    return { j: pickFwd(j1, j2) ? j1 : j2, e: [bx, by] };
-  }
-  function chain(c, pts, w, col) { // hueso doble con contorno y articulación redondeada
-    const path = () => { c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]); c.stroke(); };
-    c.lineCap = 'round'; c.lineJoin = 'round';
-    c.strokeStyle = INK; c.lineWidth = w + 4; path();
-    c.strokeStyle = col; c.lineWidth = w; path();
-  }
-  function poseRig(o, h, tw, hipY0, neckY0) {
-    const t = clock + (o.ph || 0), s = clamp((o.speed || 0) / 220, 0, 1), u = o.u || 0, R = {
-      lean: 0, crouch: 0, bob: 0, tilt: 0, breathe: 0, smear: null,
-      feet: [[-tw * 0.5, 0], [tw * 0.55, 0]], footRot: [0, 0],
-      hands: [[-tw * 1.2, hipY0 + h * 0.02], [tw * 1.25, hipY0 + h * 0.02]], elbowUp: [false, false],
-    };
-    const shY = neckY0 + 6;
-    const air = o.air, rising = air && (o.vy || 0) < -120;
-    const airLegs = () => {
-      if (rising) { R.feet = [[-h * 0.13, -h * 0.13], [h * 0.07, -h * 0.17]]; R.footRot = [0.5, 0.35]; }
-      else { R.feet = [[-h * 0.1, -h * 0.03], [h * 0.09, -h * 0.07]]; R.footRot = [0.35, 0.2]; }
-    };
-    switch (o.pose) {
-      case 'spike': { // armado detrás de la cabeza → latigazo por arriba → acompañamiento hacia abajo
-        const p = ease(u * 1.7), th = lerp(-0.95, 2.1, p), Rr = h * 0.4, sx = -tw * 0.8;
-        R.hands[0] = [sx + Math.sin(th) * Rr, shY - Math.cos(th) * Rr]; R.elbowUp[0] = p < 0.45;
-        R.hands[1] = [lerp(h * 0.24, h * 0.1, p), lerp(shY - h * 0.16, hipY0 - h * 0.04, p)]; R.raised = p < 0.5;
-        R.lean = lerp(-0.22, 0.36, p); R.tilt = lerp(-0.12, 0.18, p);
-        if (air) { R.feet = [[lerp(-h * 0.14, h * 0.02, p), -h * 0.1], [lerp(-h * 0.06, h * 0.09, p), -h * 0.13]]; R.footRot = [0.6, 0.4]; }
-        else { R.crouch = h * 0.03; R.feet = [[-h * 0.09, 0], [h * 0.1, 0]]; }
-        if (u < 0.55) R.smear = { cx: sx, cy: shY, r: Rr, a0: th - 1.1, a1: th, k: 1 - u / 0.55 };
-        break;
-      }
-      case 'armed': // en el aire listo para rematar: brazo atrás y arriba, el otro apunta al balón, espalda arqueada
-        R.hands[0] = [-h * 0.26, shY - h * 0.36]; R.elbowUp[0] = true; // el que remata, armado detrás de la cabeza
-        R.hands[1] = [h * 0.26, shY - h * 0.18]; R.raised = true; // el otro señala el balón
-        R.lean = -0.16; R.tilt = -0.15; airLegs();
-        if (!rising) R.feet = [[-h * 0.12, -h * 0.05], [-h * 0.02, -h * 0.09]];
-        break;
-      case 'bump': { // recepción: piernas flexionadas, brazos juntos y estirados por delante; sube al golpear
-        const p = Math.sin(Math.PI * clamp(u * 1.8, 0, 1));
-        R.crouch = h * (0.11 - 0.04 * p); R.lean = 0.32 - 0.12 * p;
-        R.feet = [[-h * 0.16, 0], [h * 0.16, 0]];
-        const hy = hipY0 - h * 0.02 - p * h * 0.1;
-        R.hands = [[h * 0.31, hy], [h * 0.33, hy + 1]];
-        if (air) airLegs();
-        break;
-      }
-      case 'set': { // colocación: manos sobre la frente, codos abiertos, empuja con las piernas
-        const p = ease(u * 2);
-        R.crouch = h * 0.07 * (1 - p); R.lean = -0.06; R.tilt = -0.2;
-        const hy = neckY0 - h * (0.44 + 0.07 * p);
-        R.hands = [[h * 0.02, hy], [h * 0.2, hy - 1]]; R.elbowUp = [true, true]; R.raised = true;
-        R.feet = [[-h * 0.1, 0], [h * 0.1, 0]];
-        if (air) airLegs();
-        break;
-      }
-      case 'dive': // plancha (se dibuja girado): brazos estirados por delante, piernas atrás
-        R.hands = [[h * 0.08, neckY0 - h * 0.48], [h * 0.12, neckY0 - h * 0.48]]; R.raised = true;
-        R.feet = [[-h * 0.04, h * 0.02], [h * 0.03, -h * 0.01]]; R.footRot = [0.9, 0.9];
-        break;
-      case 'cheer': { // celebra: saltitos con los puños arriba
-        const j = Math.abs(Math.sin(t * 7));
-        R.bob = -j * h * 0.07;
-        R.hands = [[-h * 0.26, neckY0 - h * (0.4 + 0.05 * Math.sin(t * 14))], [h * 0.28, neckY0 - h * (0.38 - 0.05 * Math.sin(t * 14))]]; R.elbowUp = [true, true]; R.raised = true;
-        R.feet = [[-tw * 0.5, -j * h * 0.04], [tw * 0.55, -j * h * 0.06]]; R.tilt = -0.15;
-        break;
-      }
-      case 'sad': // se lamenta: hombros caídos, cabeza gacha
-        R.lean = 0.2; R.crouch = h * 0.02; R.tilt = 0.3;
-        R.hands = [[-tw * 0.7, hipY0 + h * 0.07], [tw * 1.0, hipY0 + h * 0.08]];
-        break;
-      case 'ready': { // atento: agachado, piernas abiertas, manos por delante; pequeños botes
-        R.crouch = h * 0.075; R.lean = 0.2; R.bob = Math.sin(t * 9) * h * 0.008;
-        R.feet = [[-h * 0.15, 0], [h * 0.16, 0]];
-        R.hands = [[h * 0.12, hipY0 - h * 0.02], [h * 0.24, hipY0 - h * 0.01]];
-        if (s > 0.15) runLegs(); // se mueve sin dejar de estar atento
-        if (air) airLegs();
-        break;
-      }
-      default: { // parado o corriendo
-        R.breathe = air ? 0 : Math.sin(t * 2.3) * (1 - s);
-        if (air) { airLegs(); R.hands = [[-h * 0.1, shY + h * 0.08], [h * 0.15, shY + h * 0.06]]; break; }
-        if (s > 0.05) runLegs();
-        else { const sw = Math.sin(t * 1.6) * h * 0.008; R.hands = [[-tw * 1.2 + sw, hipY0 + h * 0.02], [tw * 1.25 - sw, hipY0 + h * 0.02]]; }
-      }
-    }
-    if (o.stun) { R.lean = Math.sin(t * 11) * 0.18; R.tilt = Math.sin(t * 9) * 0.25; R.hands = [[-tw * 1.2, shY + h * 0.06], [tw * 1.5, shY + h * 0.04]]; }
-    return R;
-    function runLegs() { // zancada: el pie que avanza va levantado; brazos en contra de las piernas y codos a 90º
-      const ph = o.run, A = h * 0.2 * s, Lf = h * 0.12 * s;
-      R.feet = [0, 1].map(i => { const a = ph + i * Math.PI; return [(i ? tw * 0.4 : -tw * 0.4) + Math.sin(a) * A + h * 0.01, -Math.max(0, Math.cos(a)) * Lf]; });
-      R.footRot = [0, 1].map(i => Math.max(0, Math.cos(ph + i * Math.PI)) * 0.5 * s);
-      R.crouch = Math.max(R.crouch, h * 0.035 * s); R.bob += -Math.abs(Math.cos(ph)) * h * 0.022 * s; R.lean = Math.max(R.lean, 0.24 * s);
-      if (o.pose !== 'ready') R.hands = [0, 1].map(i => { const a = ph + (1 - i) * Math.PI, sw = Math.sin(a); return [(i ? tw * 1.15 : -tw * 1.1) + sw * h * 0.14 * s + h * 0.03 * s, hipY0 - h * 0.05 * s - Math.max(0, sw) * h * 0.07 * s]; });
-    }
-  }
   function drawChar(c, o) {
     const h = o.ch.h, T = TEAM[o.team], f = o.face, L = o.shadow ? Object.assign({}, LOOK[o.ch.id], DARK) : LOOK[o.ch.id];
     if (o.shadow) { c.save(); if (!qLevel) { c.shadowColor = T.c; c.shadowBlur = 9; } } // Sombra: todo negro con un halo del color de su equipo
     const hr = h * 0.165, headY = -h + hr, neckY = -h + 2 * hr - 2, hipY = -h * 0.36, tw = h * 0.17 * L.wf;
-    const lw = h * 0.085, aw = h * 0.07, thigh = h * 0.19, shin = h * 0.185, upper = h * 0.155, fore = h * 0.15;
-    const R = poseRig(o, h, tw, hipY, neckY);
+    const lw = h * 0.085, aw = h * 0.074;
+    c.lineCap = 'round'; c.lineJoin = 'round'; c.lineWidth = 2.5;
+    // Piernas
+    let f1, f2;
+    if (o.air) { f1 = [-f * h * 0.16, -h * 0.1]; f2 = [f * h * 0.03, -h * 0.02]; }
+    else {
+      const st = h * 0.17 * clamp(o.speed / 220, 0, 1), s = Math.sin(o.run), co = Math.cos(o.run);
+      f1 = [-tw * 0.5 + s * st, -Math.max(0, co) * h * 0.07 * clamp(o.speed / 220, 0, 1)];
+      f2 = [tw * 0.5 - s * st, -Math.max(0, -co) * h * 0.07 * clamp(o.speed / 220, 0, 1)];
+      if (o.pose === 'bump' || o.pose === 'ready') { f1[0] -= h * 0.05; f2[0] += h * 0.05; }
+    }
+    // Brazos
+    const sh = [[-tw * 0.82, neckY + 6], [tw * 0.82, neckY + 6]];
+    let h1, h2, k = o.k, sided = false;
+    if (o.pose === 'bump') { const y = -h * 0.36 - k * h * 0.16; h1 = [f * h * 0.36, y]; h2 = [f * h * 0.4, y + 3]; }
+    else if (o.pose === 'set') { sided = true; const y = -h * 1.1 - k * h * 0.06; h1 = [f * h * 0.02 - h * 0.1, y]; h2 = [f * h * 0.02 + h * 0.1, y]; }
+    else if (o.pose === 'spike') {
+      const a = lerp(-2.25, -0.25, k), R = h * 0.42;
+      h1 = [f * (sh[1][0] * 0.3 + Math.cos(a) * R), neckY + Math.sin(a) * R];
+      h2 = [f * h * 0.22, -h * 0.62];
+    } else if (o.pose === 'armed') { h1 = [-f * h * 0.2, -h * 1.12]; h2 = [f * h * 0.24, -h * 0.9]; }
+    else if (o.pose === 'cheer') { sided = true; const w = Math.sin(o.run * 2) * 3; h1 = [-h * 0.3, -h * 1.12 + w]; h2 = [h * 0.3, -h * 1.12 - w]; }
+    else if (o.pose === 'ready') { h1 = [f * h * 0.24, hipY - h * 0.06]; h2 = [f * h * 0.3, hipY - h * 0.02]; }
+    else { sided = true; const sw = Math.sin(o.run) * h * 0.1 * clamp(o.speed / 220, 0, 1); h1 = [-tw * 1.25 - sw, hipY + 2]; h2 = [tw * 1.25 + sw, hipY + 2]; }
+    const back = f > 0 ? 0 : 1, front = 1 - back;
+    const arm = (i, hand) => limb(c, sh[i][0], sh[i][1], hand[0], hand[1], (i ? -1 : 1) * 0.18, aw, L.skin);
+    const hands = sided ? [h1, h2] : (back === 0 ? [h1, h2] : [h2, h1]);
+    arm(back, hands[back]);
+    limb(c, -tw * 0.45, hipY, f1[0], f1[1], o.air ? -f * 0.5 : 0.12, lw, L.skin);
+    limb(c, tw * 0.45, hipY, f2[0], f2[1], o.air ? -f * 0.5 : -0.12, lw, L.skin);
+    for (const ft of [f1, f2]) { // zapatillas
+      c.fillStyle = o.shadow ? '#0A0A10' : '#24304F'; c.strokeStyle = INK; c.lineWidth = 2;
+      c.beginPath(); c.ellipse(ft[0] + f * h * 0.03, ft[1] - h * 0.012, h * 0.075, h * 0.042, 0, 0, 7); c.fill(); c.stroke();
+      if (!o.shadow) { c.fillStyle = PAPER; c.fillRect(ft[0] - h * 0.035 + f * h * 0.03, ft[1] - h * 0.006, h * 0.07, 1.6); }
+    }
+    // Torso
+    // Equipación: el color del equipo siempre manda; cambia el estilo
     const kit = o.shadow ? 'sombra' : o.kit || 'clasica', GOLD = '#FFC83A', NEON = '#141B33';
-    const skinFar = o.shadow ? L.skin : shade(L.skin, -0.16);
-    const shirtCol = kit === 'neon' ? NEON : kit === 'sombra' ? '#14141E' : T.c;
-    const shortsCol = kit === 'sombra' ? '#101018' : kit === 'retro' ? T.d : kit === 'oro' ? GOLD : kit === 'neon' ? NEON : kit === 'noel' ? T.c : PAPER;
-    const padCol = o.shadow ? '#0E0E16' : kit === 'oro' ? GOLD : PAPER;
-    c.save(); c.scale(f, 1); // todo se dibuja mirando hacia delante (+x) y se refleja si mira a la izquierda
-    c.lineCap = 'round'; c.lineJoin = 'round';
-    // Cadera y tronco
-    const hip = [0, hipY + R.crouch + R.bob], lean = R.lean;
-    const toWorld = (x, y) => { const dy = y - hipY, cs = Math.cos(lean), sn = Math.sin(lean); return [hip[0] + x * cs - dy * sn, hip[1] + x * sn + dy * cs]; };
-    // Piernas (la de atrás primero, más oscura): rodilla hacia delante
-    const legs = [0, 1].map(i => {
-      const hx = hip[0] + (i ? tw * 0.45 : -tw * 0.45), ft = R.feet[i];
-      const r = ik(hx, hip[1], ft[0], ft[1], thigh, shin, (a, b) => a[0] > b[0]);
-      return { hip: [hx, hip[1]], knee: r.j, foot: r.e, rot: R.footRot[i] };
-    });
-    const drawLeg = (L2, col, far) => {
-      chain(c, [L2.hip, L2.knee, L2.foot], lw, col);
-      // rodillera
-      const ang = Math.atan2(L2.foot[1] - L2.knee[1], L2.foot[0] - L2.knee[0]);
-      c.save(); c.translate(L2.knee[0], L2.knee[1]); c.rotate(ang);
-      c.fillStyle = far ? shade(padCol[0] === '#' ? padCol : '#FBFDFF', -0.18) : padCol; c.strokeStyle = INK; c.lineWidth = 1.8;
-      c.beginPath(); c.roundRect(-lw * 0.2, -lw * 0.62, lw * 0.95, lw * 1.24, lw * 0.4); c.fill(); c.stroke(); c.restore();
-      // zapatilla con suela
-      c.save(); c.translate(L2.foot[0], L2.foot[1]); c.rotate(L2.rot);
-      c.fillStyle = o.shadow ? '#0A0A10' : far ? '#1B2440' : '#24304F'; c.strokeStyle = INK; c.lineWidth = 2;
-      c.beginPath(); c.moveTo(-h * 0.045, -h * 0.005); c.quadraticCurveTo(-h * 0.05, -h * 0.065, h * 0.01, -h * 0.06); c.quadraticCurveTo(h * 0.075, -h * 0.045, h * 0.085, -h * 0.005); c.closePath(); c.fill(); c.stroke();
-      if (!o.shadow) { c.fillStyle = far ? '#C9D3E6' : PAPER; c.beginPath(); c.roundRect(-h * 0.048, -h * 0.018, h * 0.135, h * 0.022, 2); c.fill(); c.lineWidth = 1.2; c.stroke(); }
-      c.restore();
-    };
-    // Brazos: hombros en el tronco; las manos de la pose también van en el marco del tronco
-    const sh = [[-tw * 0.8, neckY + 6], [tw * 0.8, neckY + 6]];
-    const arms = [0, 1].map(i => {
-      const r = ik(sh[i][0], sh[i][1], R.hands[i][0], R.hands[i][1], upper, fore, R.elbowUp[i] ? (a, b) => a[1] < b[1] : (a, b) => a[0] < b[0], 1.6);
-      return { sh: sh[i], el: r.j, hd: r.e };
-    });
-    const drawArm = (A, col, far) => {
-      const pts = [A.sh, A.el, A.hd].map(p => toWorld(p[0], p[1]));
-      chain(c, pts, aw, col);
-      // manga corta del color de la camiseta
-      const mx = pts[0][0] + (pts[1][0] - pts[0][0]) * 0.3, my = pts[0][1] + (pts[1][1] - pts[0][1]) * 0.3;
-      c.strokeStyle = INK; c.lineWidth = aw + 5; c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); c.lineTo(mx, my); c.stroke();
-      c.strokeStyle = far ? shade(shirtCol, -0.18) : shirtCol; c.lineWidth = aw + 1; c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); c.lineTo(mx, my); c.stroke();
-      // mano
-      c.fillStyle = col; c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.arc(pts[2][0], pts[2][1], aw * 0.62, 0, 7); c.fill(); c.stroke();
-    };
-    // Estela del brazo que remata
-    if (R.smear && !o.shadow) {
-      const S = R.smear, ctr = toWorld(S.cx, S.cy);
-      c.save(); c.globalAlpha = 0.55 * S.k; c.strokeStyle = PAPER; c.lineCap = 'round';
-      for (let i = 0; i < 3; i++) { c.lineWidth = aw * (1.5 - i * 0.45); c.beginPath(); c.arc(ctr[0], ctr[1], S.r * (1 - i * 0.12), S.a0 - Math.PI / 2 + lean, S.a1 - Math.PI / 2 + lean); c.stroke(); }
+    c.lineWidth = 2.5; c.strokeStyle = INK;
+    c.fillStyle = kit === 'sombra' ? '#101018' : kit === 'retro' ? T.d : kit === 'oro' ? GOLD : kit === 'neon' ? NEON : kit === 'noel' ? T.c : PAPER;
+    c.beginPath(); c.roundRect(-tw, hipY - h * 0.1, tw * 2, h * 0.17, 5); c.fill(); c.stroke();
+    const shirtH = hipY - neckY - h * 0.04, shirt = () => { c.beginPath(); c.roundRect(-tw, neckY, tw * 2, shirtH, [7, 7, 3, 3]); };
+    c.fillStyle = kit === 'neon' ? NEON : kit === 'sombra' ? '#14141E' : T.c; shirt(); c.fill();
+    if (kit !== 'clasica' && kit !== 'sombra') {
+      c.save(); shirt(); c.clip();
+      if (kit === 'rayas') { c.fillStyle = T.d; for (let x = -tw + 3; x < tw; x += 9) c.fillRect(x, neckY, 4, shirtH); }
+      else if (kit === 'retro') { c.fillStyle = PAPER; c.fillRect(-tw, neckY + shirtH * 0.34, tw * 2, 5); c.fillStyle = T.d; c.fillRect(-tw, neckY + shirtH * 0.34 + 5, tw * 2, 3); }
+      else if (kit === 'neon') { c.fillStyle = T.c; c.fillRect(-tw, neckY + shirtH * 0.42, tw * 2, 3); c.beginPath(); c.moveTo(-tw * 0.5, neckY); c.lineTo(0, neckY + shirtH * 0.3); c.lineTo(tw * 0.5, neckY); c.lineWidth = 2.5; c.strokeStyle = T.c; c.stroke(); }
+      else if (kit === 'oro') { c.fillStyle = GOLD; c.fillRect(-tw, neckY, tw * 2, 5); c.fillStyle = GOLD; c.strokeStyle = INK; c.lineWidth = 1.2; starAt(c, 0, neckY + shirtH * 0.5, Math.min(6, tw * 0.45)); }
+      else if (kit === 'camuflaje') { // manchas en tonos del equipo
+        const blobs = [[-0.6, 0.2, 0.42], [0.45, 0.35, 0.36], [-0.1, 0.7, 0.4], [0.7, 0.8, 0.3], [-0.75, 0.85, 0.28]];
+        for (const [bx, by, br] of blobs) { c.fillStyle = by > 0.5 ? T.d : 'rgba(20,24,30,.35)'; c.beginPath(); c.ellipse(bx * tw, neckY + by * shirtH, br * tw, br * tw * 0.7, 0.6, 0, 7); c.fill(); }
+      } else if (kit === 'noel') { // traje de Papá Noel del color del equipo: pelo blanco abajo y en el centro, cinturón negro con hebilla
+        c.fillStyle = PAPER; c.fillRect(-tw, neckY + shirtH * 0.8, tw * 2, shirtH * 0.2); c.fillRect(-2, neckY, 4, shirtH * 0.62);
+        c.fillStyle = '#1A1A1A'; c.fillRect(-tw, neckY + shirtH * 0.6, tw * 2, Math.max(4, shirtH * 0.14));
+        c.fillStyle = GOLD; c.strokeStyle = INK; c.lineWidth = 1; c.beginPath(); c.rect(-4, neckY + shirtH * 0.6 - 1, 8, Math.max(4, shirtH * 0.14) + 2); c.fill(); c.stroke();
+      } else if (kit === 'arcoiris') { // franja arcoíris en el pecho; el resto, del color del equipo
+        const cols = ['#FF4D4D', '#FF9F1C', '#FFE14D', '#4CD964', '#3FA9F5', '#8E6CFF'], y0 = neckY + shirtH * 0.28, bh = shirtH * 0.07;
+        cols.forEach((col, k) => { c.fillStyle = col; c.fillRect(-tw, y0 + k * bh, tw * 2, bh + 0.5); });
+      }
       c.restore();
     }
-    drawArm(arms[0], skinFar, true);
-    drawLeg(legs[0], skinFar, true);
-    drawLeg(legs[1], L.skin, false);
-    // Tronco: pantalón, camiseta con forma (hombros más anchos que la cintura), cuello y cabeza; todo inclinado con la cadera
-    c.save(); c.translate(hip[0], hip[1]); c.rotate(lean); c.translate(0, -hipY);
-    if (R.breathe) { c.translate(0, hipY); c.scale(1, 1 + R.breathe * 0.018); c.translate(0, -hipY); }
-    c.lineWidth = 2.5; c.strokeStyle = INK; c.fillStyle = shortsCol;
-    c.beginPath(); c.moveTo(-tw * 0.95, hipY - h * 0.1); c.lineTo(tw * 0.95, hipY - h * 0.1); c.lineTo(tw * 1.0, hipY + h * 0.075); c.lineTo(tw * 0.08, hipY + h * 0.075); c.lineTo(0, hipY + h * 0.03); c.lineTo(-tw * 0.08, hipY + h * 0.075); c.lineTo(-tw * 1.0, hipY + h * 0.075); c.closePath(); c.fill(); c.stroke();
-    // cuello
-    c.fillStyle = L.skin; c.beginPath(); c.roundRect(-h * 0.035, neckY - 6, h * 0.07, 10, 3); c.fill(); c.stroke();
-    const shirtH = hipY - neckY - h * 0.04, sw = tw * 1.1, ww = tw * 0.92;
-    const shirt = () => { c.beginPath(); c.moveTo(-ww, neckY + shirtH); c.lineTo(-sw, neckY + 8); c.quadraticCurveTo(-sw, neckY, -sw + 8, neckY); c.lineTo(sw - 8, neckY); c.quadraticCurveTo(sw, neckY, sw, neckY + 8); c.lineTo(ww, neckY + shirtH); c.closePath(); };
-    c.fillStyle = shirtCol; shirt(); c.fill();
-    c.save(); shirt(); c.clip();
-    if (kit === 'rayas') { c.fillStyle = T.d; for (let x = -sw + 3; x < sw; x += 9) c.fillRect(x, neckY, 4, shirtH); }
-    else if (kit === 'retro') { c.fillStyle = PAPER; c.fillRect(-sw, neckY + shirtH * 0.34, sw * 2, 5); c.fillStyle = T.d; c.fillRect(-sw, neckY + shirtH * 0.34 + 5, sw * 2, 3); }
-    else if (kit === 'neon') { c.fillStyle = T.c; c.fillRect(-sw, neckY + shirtH * 0.42, sw * 2, 3); c.beginPath(); c.moveTo(-tw * 0.5, neckY); c.lineTo(0, neckY + shirtH * 0.3); c.lineTo(tw * 0.5, neckY); c.lineWidth = 2.5; c.strokeStyle = T.c; c.stroke(); }
-    else if (kit === 'oro') { c.fillStyle = GOLD; c.fillRect(-sw, neckY, sw * 2, 5); c.strokeStyle = INK; c.lineWidth = 1.2; starAt(c, 0, neckY + shirtH * 0.5, Math.min(6, tw * 0.45)); }
-    else if (kit === 'camuflaje') {
-      const blobs = [[-0.6, 0.2, 0.42], [0.45, 0.35, 0.36], [-0.1, 0.7, 0.4], [0.7, 0.8, 0.3], [-0.75, 0.85, 0.28]];
-      for (const [bx, by, br] of blobs) { c.fillStyle = by > 0.5 ? T.d : 'rgba(20,24,30,.35)'; c.beginPath(); c.ellipse(bx * tw, neckY + by * shirtH, br * tw, br * tw * 0.7, 0.6, 0, 7); c.fill(); }
-    } else if (kit === 'noel') {
-      c.fillStyle = PAPER; c.fillRect(-sw, neckY + shirtH * 0.8, sw * 2, shirtH * 0.2); c.fillRect(-2, neckY, 4, shirtH * 0.62);
-      c.fillStyle = '#1A1A1A'; c.fillRect(-sw, neckY + shirtH * 0.6, sw * 2, Math.max(4, shirtH * 0.14));
-      c.fillStyle = GOLD; c.strokeStyle = INK; c.lineWidth = 1; c.beginPath(); c.rect(-4, neckY + shirtH * 0.6 - 1, 8, Math.max(4, shirtH * 0.14) + 2); c.fill(); c.stroke();
-    } else if (kit === 'arcoiris') {
-      const cols = ['#FF4D4D', '#FF9F1C', '#FFE14D', '#4CD964', '#3FA9F5', '#8E6CFF'], y0 = neckY + shirtH * 0.28, bh = shirtH * 0.07;
-      cols.forEach((col, k) => { c.fillStyle = col; c.fillRect(-sw, y0 + k * bh, sw * 2, bh + 0.5); });
-    }
-    if (kit !== 'noel' && kit !== 'sombra') { c.fillStyle = kit === 'neon' ? T.c : T.d; c.beginPath(); c.moveTo(-tw * 0.38, neckY - 1); c.lineTo(tw * 0.05, neckY + shirtH * 0.18); c.lineTo(tw * 0.45, neckY - 1); c.fill(); } // cuello en pico
-    c.fillStyle = 'rgba(10,15,40,.13)'; c.fillRect(-sw, neckY, sw * 0.55, shirtH); // costado en sombra (el de atrás)
-    c.restore();
     c.lineWidth = 2.5; c.strokeStyle = INK; shirt(); c.stroke();
     if (kit === 'neon') { c.save(); if (!qLevel) { c.shadowColor = T.c; c.shadowBlur = 8; } c.strokeStyle = T.c; c.lineWidth = 1.6; shirt(); c.stroke(); c.restore(); }
-    c.fillStyle = kit === 'oro' ? '#E89B00' : kit === 'sombra' ? T.c : kit === 'noel' ? PAPER : T.d; c.fillRect(-ww + 2.5, hipY - h * 0.1, ww * 2 - 5, 3);
-    c.restore(); // tronco
-    if (R.raised) drawArm(arms[1], L.skin, false); // brazo levantado: queda por detrás de la cabeza
-    c.save(); c.translate(hip[0], hip[1]); c.rotate(lean); c.translate(0, -hipY);
-    // Cabeza (gira un poco con la pose)
-    c.save(); c.translate(1.5, neckY - 2); c.rotate(R.tilt); c.translate(0, headY - neckY + 2);
-    c.lineWidth = 2.5; hairBack(c, o.ch.id, hr, L);
+    c.fillStyle = kit === 'oro' ? '#E89B00' : kit === 'sombra' ? T.c : kit === 'noel' ? PAPER : T.d; c.fillRect(-tw + 2.5, hipY - h * 0.1, tw * 2 - 5, 3);
+    // Cabeza
+    const bob = o.pose === 'sad' ? 3 : 0;
+    c.save(); c.translate(f * 1.5, headY + bob); c.scale(f, 1);
+    c.lineWidth = 2.5 ; hairBack(c, o.ch.id, hr, L);
     c.fillStyle = L.skin; c.strokeStyle = INK; c.beginPath(); c.arc(0, 0, hr, 0, 7); c.fill(); c.stroke();
     c.lineWidth = 2; hairFront(c, o.ch.id, hr, L);
-    if (kit === 'noel') {
+    if (kit === 'noel') { // barba, bigote y gorro de Papá Noel
       c.fillStyle = PAPER; c.strokeStyle = INK; c.lineWidth = 1.6;
       c.beginPath(); c.moveTo(-0.2 * hr, 0.15 * hr);
       c.quadraticCurveTo(-0.25 * hr, 0.95 * hr, 0.25 * hr, 1.3 * hr); c.quadraticCurveTo(0.55 * hr, 1.05 * hr, 0.7 * hr, 1.25 * hr);
@@ -2475,11 +2342,9 @@ if (typeof module !== 'undefined') module.exports = VB;
       c.beginPath(); c.arc(-1.45 * hr, -1.0 * hr, 0.24 * hr, 0, 7); c.fill(); c.stroke();
     }
     c.fillStyle = INK; c.strokeStyle = INK; c.lineWidth = 1.6;
-    const blink = !o.shadow && o.pose === 'idle' && ((clock + (o.ph || 0) * 1.37) % 3.4) < 0.12;
     if (o.stun) { c.beginPath(); c.moveTo(hr * 0.3, -hr * 0.2); c.lineTo(hr * 0.7, hr * 0.15); c.moveTo(hr * 0.7, -hr * 0.2); c.lineTo(hr * 0.3, hr * 0.15); c.stroke(); }
-    else if (blink) { c.beginPath(); c.moveTo(hr * 0.36, -hr * 0.02); c.lineTo(hr * 0.64, -hr * 0.02); c.stroke(); }
     else { if (o.shadow) c.fillStyle = T.l; c.beginPath(); c.arc(hr * 0.5, -hr * 0.02, hr * 0.15, 0, 7); c.fill(); }
-    if (!o.shadow) {
+    if (!o.shadow) { // boca según el momento: celebra, se lamenta o se concentra al rematar
       const mx = hr * 0.55, my = hr * 0.5;
       c.strokeStyle = INK; c.lineWidth = 1.6; c.lineCap = 'round';
       if (o.pose === 'cheer') { c.fillStyle = '#7A2230'; c.beginPath(); c.arc(mx, my - hr * 0.1, hr * 0.24, 0.1, Math.PI - 0.1); c.closePath(); c.fill(); c.stroke(); }
@@ -2487,13 +2352,10 @@ if (typeof module !== 'undefined') module.exports = VB;
       else if (o.pose === 'spike' || o.pose === 'armed') {
         c.beginPath(); c.moveTo(mx - hr * 0.15, my); c.lineTo(mx + hr * 0.18, my - hr * 0.03); c.stroke();
         c.beginPath(); c.moveTo(hr * 0.28, -hr * 0.34); c.lineTo(hr * 0.72, -hr * 0.24); c.stroke();
-      } else if (o.pose === 'bump' || o.pose === 'set') { c.beginPath(); c.arc(mx, my - hr * 0.02, hr * 0.1, 0, 7); c.stroke(); } // concentrado: boca en «o»
-      else { c.beginPath(); c.arc(mx, my - hr * 0.14, hr * 0.18, 0.35, Math.PI - 0.35); c.stroke(); }
+      } else { c.beginPath(); c.arc(mx, my - hr * 0.14, hr * 0.18, 0.35, Math.PI - 0.35); c.stroke(); }
     }
-    c.restore(); // cabeza
-    c.restore(); // marco del tronco
-    if (!R.raised) drawArm(arms[1], L.skin, false);
-    c.restore(); // reflejo
+    c.restore();
+    arm(front, hands[front]);
     if (o.shadow) c.restore();
   }
   function starAt(c, x, y, r) {
@@ -2503,7 +2365,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   function poseOf(g, p) {
     const dt = g.time - p.anim.swingT;
-    if (dt < 0.32 && p.anim.swingType) return [p.anim.swingType === 'drive' ? 'bump' : p.anim.swingType, clamp(dt / 0.16, 0, 1), dt / 0.32];
+    if (dt < 0.32 && p.anim.swingType) return [p.anim.swingType === 'drive' ? 'bump' : p.anim.swingType, clamp(dt / 0.16, 0, 1)];
     if (g.state === 'point' || g.state === 'over') {
       const won = g.lastPoint && g.lastPoint.team === p.team;
       return [won ? 'cheer' : 'sad', 0];
@@ -2759,18 +2621,18 @@ if (typeof module !== 'undefined') module.exports = VB;
     // Jugadores
     for (const p of g.players) {
       if (p.cd <= 0 && g.state !== 'over') drawAura(p);
-      const [pose, k, u] = poseOf(g, p);
+      const [pose, k] = poseOf(g, p);
       ctx.save();
       if (p.dive || p.rec > 0) {
         // Plancha: cuerpo tendido hacia donde se lanzó
         ctx.translate(p.x - p.face * p.ch.h * 0.3, p.y - p.ch.h * 0.13); ctx.rotate(p.face * 1.32);
-        drawChar(ctx, { ch: p.ch, team: p.team, face: p.face, run: 0, speed: 0, air: false, pose: 'dive', k: 1, stun: false, kit: p.kit, shadow: p.shadow, ph: p.i * 1.7 });
+        drawChar(ctx, { ch: p.ch, team: p.team, face: p.face, run: 0, speed: 0, air: true, pose: 'set', k: 1, stun: false, kit: p.kit, shadow: p.shadow });
       } else {
         ctx.translate(p.x, p.y);
         const ql = clock - (p._sq || -9), qs = clock - (p._st || -9); // al caer se aplasta un poco; al saltar se estira
         if (ql < 0.16) { const a = Math.sin((ql / 0.16) * Math.PI) * 0.13; ctx.scale(1 + a, 1 - a); }
         else if (qs < 0.18 && !p.onGround) { const a = (1 - qs / 0.18) * 0.1; ctx.scale(1 - a * 0.6, 1 + a); }
-        drawChar(ctx, { ch: p.ch, team: p.team, face: p.face, run: pose === 'cheer' ? clock * 7 : p.anim.run, speed: Math.abs(p.vx), air: !p.onGround, vy: p.vy, pose, k, u: u || 0, stun: p.stun > 0, kit: p.kit, shadow: p.shadow, ph: p.i * 1.7 });
+        drawChar(ctx, { ch: p.ch, team: p.team, face: p.face, run: pose === 'cheer' ? clock * 7 : p.anim.run, speed: Math.abs(p.vx), air: !p.onGround, pose, k, stun: p.stun > 0, kit: p.kit, shadow: p.shadow });
       }
       ctx.restore();
       if (p.stun > 0) {
@@ -3500,7 +3362,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 31; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 32; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4030,7 +3892,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   // Enlace para invitar: la misma página con el servidor propio y el código de la sala
   function shareLink() { const u = new URL(location.href); u.search = ''; u.hash = ''; if (SRV) u.searchParams.set('srv', SRV.replace(/^wss:\/\//, '').replace(/\/$/, '')); if (net.code) u.searchParams.set('sala', net.code.toUpperCase()); return u.href; }
-  window.rvDebug = () => ({ drawChar, series, game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
+  window.rvDebug = () => ({ series, game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
 
   /* ---------- Estadísticas ---------- */
   // Por jugador: puntos, saques directos, remates, colocaciones, recepciones, planchas y fallos
