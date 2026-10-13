@@ -709,7 +709,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
             <li><strong>Colocar</strong>: pase hacia la red. Tocado más abajo sale más alto; tocado arriba, rápido y bajo.</li>
             <li><strong>Rematar</strong> en el aire: más picado cuanto más alto esté el balón. Abajo lo pica, hacia la red lo aplana, hacia atrás es dejada. En el suelo es un globo.</li>
             <li><strong>Plancha</strong> (Abajo en el suelo): salvas el balón bajo, pero tardas en levantarte.</li>
-            <li><strong>Saque</strong>: Rematar saca potente; Recibir o Colocar, alto y seguro.</li>
+            <li><strong>Saque en salto</strong>: Rematar para el potente; Recibir o Colocar para el flojo. Lanzas el balón y saltas: vuelve a pulsar cuando esté arriba. En el momento justo, el potente sale como un remate y el flojo con mucho efecto.</li>
           </ul>
         </div>
         <div class="topic" id="help-chars" hidden><ul id="charList"></ul></div>
@@ -1103,24 +1103,33 @@ const VB = (() => {
     emit(g, { type: 'hit', kind: type, n, down: !!down, tip: type === 'spike' && ax < -0.33, x: b.x, y: b.y, team: p.team, player: p.i, fire: b.fire, curve: !!b.curve });
   }
 
-  function doServe(g, p, power) {
+  function doServe(g, p, power, q) { // q: 'perfect' (en el momento justo), 'good' o 'poor'; sin q, saque de siempre
     const b = g.ball, d = dirOf(p.team), ch = p.ch;
     const aimRaw = p.input.aim != null ? p.input.aim : p.input.x;
     const f = clamp(aimRaw * d, -1, 1);
     b.held = false; b.x = p.x + d * 10; b.y = p.y - ch.h - 24;
     let fire = false;
+    const air = !p.onGround, weak = q === 'poor' ? 0.9 : 1;
     if (power) {
       fire = p.buff.fire > 0;
       const k = fire ? 1.2 : 1;
-      b.vx = d * (620 + 60 * f) * k; b.vy = -460;
+      if (q === 'perfect') { // como un remate: tenso y casi plano, pasando la red con poco margen
+        const S = spikeSpeed(ch) * k * 0.95; b.vx = d * S * (0.97 + 0.03 * f);
+        const t = Math.abs(NETX - b.x) / Math.abs(b.vx), yNet = NET_TOP - BALL_R - 22 + 10 * f;
+        b.vy = Math.min(90, (yNet - b.y - 0.5 * G * t * t) / t);
+      }
+      else { b.vx = d * (620 + 60 * f) * k * weak; b.vy = air ? -330 : -460; }
       if (fire) { b.fire = true; p.buff.fire = 0; }
       if (p.buff.curve > 0) { b.curve = d; p.buff.curve = 0; }
-    } else { b.vx = d * (405 + 65 * f); b.vy = -640; }
+    } else {
+      b.vx = d * (405 + 65 * f); b.vy = air ? (q === 'poor' ? -560 : -470) : -640; // tarde: más bombeado para que pase igual
+      if (q === 'perfect') { b.vx = d * (470 + 60 * f); b.vy = -430; b.curve = d; } // flojo pero con mucho efecto: cae en picado al pasar la red
+    }
     g.state = 'rally'; g.touches = 0; g.lastHitter = p; g.lastBy = p.i; g.lastTeam = p.team; g.hitSeq++; g.rallyHits = 0; g.lastKind = 'serve';
     g.serveLive = true; g.serveRecv = false;
-    g.lastHitTime = g.time; p.lastHitT = g.time; p.anim.swingT = g.time; p.anim.swingType = power ? 'spike' : 'bump'; p.anim.hitT = g.time;
+    g.lastHitTime = g.time; p.lastHitT = g.time; p.anim.swingT = g.time; p.anim.swingType = power || air ? 'spike' : 'bump'; p.anim.hitT = g.time;
     if (g.net) netOut(g, p.i, 'serve', 0, power ? 1 : 0);
-    emit(g, { type: 'serve', power, team: p.team, player: p.i, x: b.x, y: b.y, fire });
+    emit(g, { type: 'serve', power, team: p.team, player: p.i, x: b.x, y: b.y, fire, q: q || '' });
   }
 
   function point(g, team, reason) {
@@ -1226,7 +1235,7 @@ const VB = (() => {
     const pressed = k => inp[k] && !p.prev[k];
     const wasGround = movePlayer(g, p, inp.x || 0, !!inp.down, pressed('jump'), pressed('down'), dt, true);
     if (!p.dive && p.rec <= 0) {
-      if (!g.ball.held && g.state === 'rally') { const dxb = g.ball.x - p.x; if (Math.abs(dxb) > 26) p.face = Math.sign(dxb); } // margen: no se gira cada vez que el balón le pasa por encima
+      if (!g.ball.held && g.state === 'rally') { const dxb = g.ball.x - p.x; if (Math.abs(dxb) > 12) p.face = Math.sign(dxb); }
       else p.face = dirOf(p.team);
     }
     if (p.swing) p.swing.t += dt;
@@ -1496,15 +1505,22 @@ const VB = (() => {
         const T = g.toss, b = g.ball, d = dirOf(s.team); T.t += dt;
         const tb = T.t; b.x = s.x + d * (14 + 18 * Math.min(1, tb / T.tc)); b.y = T.y0 - (T.vb * tb - 0.5 * G * tb * tb);
         if (!T.jumped && tb >= T.tj) { T.jumped = true; s.vy = -v0Of(s.ch); s.onGround = false; emit(g, { type: 'jump', x: s.x, player: s.i }); }
-        if (tb >= T.tc) { g.toss = null; doServe(g, s, true); }
+        const hitNow = q => { g.toss = null; doServe(g, s, T.power, q); };
+        if (T.jumped && tb > T.tj + 0.06 && !s.remote) {
+          const err = Math.abs(tb - T.tc), q = err < 0.05 ? 'perfect' : err < 0.12 ? 'good' : 'poor';
+          if (s.isBot) { if (T.botT == null) { const D = DIFF[g.cfg.difficulty] || DIFF.normal; T.botT = T.tc + (g.rnd() * 2 - 1) * (0.02 + 0.13 * (1 - D.smart)); } if (tb >= T.botT) hitNow(q); }
+          else if ((s.input.spike && !s.prev.spike) || (s.input.bump && !s.prev.bump) || (s.input.set && !s.prev.set)) hitNow(q); // segundo toque: en lo alto
+        }
+        if (g.toss && tb >= T.tc + 0.16) hitNow('poor'); // no ha vuelto a pulsar: lo golpea tarde
       } else placeHeld(g);
       if (ref && g.timed && g.clock <= 0 && g.score[0] !== g.score[1]) { g.winner = g.score[0] > g.score[1] ? 0 : 1; finish(g); }
       else if (g.stateT > 0.45 && !s.remote && !g.toss && g.state === 'serve') {
         const pr = k => s.input[k] && !s.prev[k];
-        if (pr('spike') && s.onGround) { // el balón sube lo justo para golpearlo en lo más alto del salto
+        const kind = pr('spike') ? 1 : pr('bump') || pr('set') ? 0 : -1;
+        if (kind >= 0 && s.onGround) { // los dos saques son en salto: el balón sube lo justo para golpearlo en lo más alto
           const y0 = s.y - s.ch.h * 0.6, tj = v0Of(s.ch) / GP, contact = s.y - s.ch.h - apexOf(s.ch) - 18;
           const vb = Math.sqrt(2 * G * Math.max(40, y0 - contact + 24)), tA = vb / G, tc = tA + Math.sqrt(2 * 24 / G);
-          g.toss = { t: 0, y0, vb, tc, tj: Math.max(0.12, tc - tj), jumped: false };
+          g.toss = { t: 0, y0, vb, tc, tj: Math.max(0.12, tc - tj), jumped: false, power: kind === 1 };
           emit(g, { type: 'toss', player: s.i });
         }
         else if (pr('bump') || pr('set')) doServe(g, s, false);
@@ -2854,8 +2870,10 @@ if (typeof module !== 'undefined') module.exports = VB;
         else { pop(e.x, y, e.n === 1 ? 'Recepción' : 'Balón alto', T.l); play('bump'); puff(e.x, e.y, 4, PAPER, 90); }
       } else if (e.type === 'serve') {
         { const sp = game.players.find(q => q.i === e.player); if (sp) sp._srvAt = game.time; }
-        pop(e.x, e.y - 24, e.fire ? '¡Saque de fuego!' : e.power ? 'Saque potente' : 'Saque', TEAM[e.team].l); ballSq = 0;
-        if (e.power) { play('spike', e.fire ? 1 : 0.5); shake = Math.max(shake, 0.1); hitStop(e.fire ? 0.06 : 0.03); } else play('serve');
+        const perf = e.q === 'perfect';
+        pop(e.x, e.y - 24, e.fire ? '¡Saque de fuego!' : perf ? (e.power ? '¡Saque bomba!' : '¡Saque con efecto!') : e.power ? 'Saque potente' : 'Saque', perf ? SUN : TEAM[e.team].l, perf ? 26 : 20); ballSq = 0;
+        if (perf) { fx.bursts.push({ x: e.x, y: e.y, t: 0, col: e.power ? PAPER : '#3BD992', n: 10, len: 40 }); punch(e.x, e.y, 0.03); }
+        if (e.power) { play('spike', perf || e.fire ? 1 : 0.5); shake = Math.max(shake, perf ? 0.25 : 0.1); hitStop(perf ? 0.08 : e.fire ? 0.06 : 0.03); } else { play(perf ? 'spike' : 'serve', 0.4); if (perf) hitStop(0.05); }
       }
       else if (e.type === 'net') play('net');
       else if (e.type === 'fault') { pop(e.x, e.y - 26, '¡Falta!', '#FFB1A6', 26); play('shank'); }
@@ -3136,7 +3154,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         if (p._fc == null) p._fc = want;
         if (want !== p._fc && !(clock - (p._tT ?? -9) < TURN)) { p._tFrom = p._fc; p._fc = want; p._tT = clock; } // empieza a girarse
         const tq = (clock - (p._tT ?? -9)) / TURN, turning = tq < 1;
-        drawChar(ctx, { ch: p.ch, team: p.team, face: turning && tq < 0.5 ? p._tFrom : p._fc, sx: turning ? Math.max(0.35, Math.abs(1 - 2 * tq)) : 1, toss: !!(g.toss && g.server === p), run: pose === 'cheer' ? clock * 7 : p.anim.run, speed: Math.abs(p.vx), air: !p.onGround, vy: p.vy, u: u || 0, land: clock - (p._sq || -9), ph: p.i * 1.7, logId: p.i, serving: g.state === 'serve' && g.server === p && !k, srv: g.time - (p._srvAt ?? -9) < 0.4, pose, k, stun: p.stun > 0, kit: p.kit, shadow: p.shadow });
+        drawChar(ctx, { ch: p.ch, team: p.team, face: want, toss: !!(g.toss && g.server === p), run: pose === 'cheer' ? clock * 7 : p.anim.run, speed: Math.abs(p.vx), air: !p.onGround, vy: p.vy, u: u || 0, land: clock - (p._sq || -9), ph: p.i * 1.7, logId: p.i, serving: g.state === 'serve' && g.server === p && !k, srv: g.time - (p._srvAt ?? -9) < 0.4, pose, k, stun: p.stun > 0, kit: p.kit, shadow: p.shadow });
       }
       ctx.restore();
       if (p.stun > 0) top2.push(() => {
@@ -3219,8 +3237,8 @@ if (typeof module !== 'undefined') module.exports = VB;
       drawPointBanner(g);
     } else if (g.state === 'serve' && !g.toss && !demo && g.server && !g.server.isBot && g.stateT > 0.3) {
       const d = g.server.control;
-      const hint = KB[d] ? keyName(KB[d].spike[0]) + ': saque potente · ' + keyName(KB[d].bump[0]) + ': saque seguro'
-        : d.startsWith('pad') ? 'B saque potente · X saque seguro' : 'Rematar: saque potente · Recibir: saque seguro';
+      const hint = (KB[d] ? keyName(KB[d].spike[0]) + ': saque potente · ' + keyName(KB[d].bump[0]) + ': saque flojo'
+        : d.startsWith('pad') ? 'B saque potente · X saque flojo' : 'Rematar: saque potente · Recibir: saque flojo') + ' · vuelve a pulsar arriba';
       text((labels[g.server.i] || '') + ' al saque', 480, 196, `30px ${FD}`, TEAM[g.server.team].l, INK, 8);
       text(hint, 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
     } else if (net.reconnect && g.state !== 'over') {
@@ -3713,7 +3731,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       { need: 6, msg: k => `Más lejos y más rápido: sal en cuanto lo veas venir.` },
       { need: 5, msg: k => `Casi imposibles. Lánzate pronto con ${k.down}.` }] },
     { id: 'saq', name: 'Saque', desc: 'Saca y haz que el balón caiga en el campo rival.', key: 'spike', lv: [
-      { need: 7, msg: k => `Saca con ${k.spike} (potente) o ${k.bump} (seguro). Tiene que caer en el campo rival.` },
+      { need: 7, msg: k => `Pulsa ${k.spike} (potente) o ${k.bump} (flojo): lanzas y saltas. Vuelve a pulsar cuando el balón esté arriba; en el momento justo sale un saque bomba o con efecto.` },
       { need: 7, msg: k => `Solo valen saques potentes con ${k.spike} que entren.` },
       { need: 6, msg: k => `Saque potente a la zona marcada: cambia en cada balón. Apunta con ${k.move}.` }] },
   ];
@@ -4250,7 +4268,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 43; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 44; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
