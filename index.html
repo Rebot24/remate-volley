@@ -1640,7 +1640,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   // Calidad automática: si el dispositivo no llega a unos 50 fotogramas por segundo durante un rato, se baja la resolución del lienzo
   // (y se quitan los halos difuminados, que son lo más caro de pintar). Dos escalones como mucho.
   const QSCALE = [1, 0.86, 0.74];
-  let qLevel = 0, slowT = 0;
+  let qLevel = 0, slowT = 0, fpsE = 60;
   let game = null, demo = true, paused = false, scene = 'menu', S = 1, last = 0, demoOverT = 0, shake = 0, clock = 0;
   const fx = { pops: [], parts: [], streaks: [], rings: [], bursts: [], trail: [], winds: [] };
   // Sensación de impacto: pausa breve en los golpes fuertes (solo sin online), acercamiento de cámara y deformaciones
@@ -2682,10 +2682,11 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (wantLock() && !locked() && performance.now() - lockAskT > 600) text('Haz clic en la pista para bloquear el ratón', 480, 162, `700 15px ${FL}`, PAPER, INK, 4);
     if (scene === 'play' && net.sala && game.net) { // retardo de ida (aprox.) y por dónde va la conexión, para todos
       const rt = net.role === 'g' ? net.rtt : Math.max(0, ...net.sala.peers().filter(q => !q.sameTab && q.presence && typeof q.presence.lt === 'number').map(q => q.presence.lt / 1000));
-      if (rt > 0) {
+      {
         const s = net.sala, rel = s.via && (s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0));
         const kind = !s.via ? 'sala de Claude' : !rel ? 'directa' : SRV && (net.role === 'h' || (s.link && s.link() === SRV)) ? 'servidor propio' : 'reserva' + (s.relays && s.relays() > 1 ? ' ×' + s.relays() : '');
-        text(kind + ' · ' + Math.round(rt * 500) + ' ms', 480, 138, `700 13px ${FL}`, rt > 0.4 ? '#FFB1A6' : PAPER, INK, 4);
+        const fps = Math.round(fpsE), bad = rt > 0.4 || fps < 40; // fotogramas por segundo: si bajan, el problema es el dispositivo, no la red
+        text(kind + (rt > 0 ? ' · ' + Math.round(rt * 500) + ' ms' : '') + ' · ' + fps + ' fps' + (net.resync ? ' · resinc. ' + net.resync : ''), 480, 138, `700 13px ${FL}`, bad ? '#FFB1A6' : PAPER, INK, 4);
       }
     }
     if (g.state === 'point' && g.lastPoint) {
@@ -3320,7 +3321,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 26; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 27; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3403,7 +3404,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     });
   }
   function netStartCommon() {
-    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0 });
+    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0 });
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
     $('#lobby').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
     buildPads(); audioInit(); resize(); lockMouse();
@@ -3455,8 +3456,15 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (scene === 'play') net.playSeats.forEach((id, i) => { // quien se va deja su jugador a un bot
       if (id && i !== net.hostIdx && !net.seatPeer.includes(id)) { const p = game.players[i]; p.remote = false; p.isBot = true; p.control = 'bot'; labels[i] = 'BOT'; net.playSeats[i] = ''; net.ctrl[i] = ''; }
     });
+    // Durante el partido esto basta 4 veces por segundo; y la pantalla de la sala (oculta) solo se rehace si cambia algo que se vea
+    if (scene === 'play' && (net.hT = (net.hT || 0) - dt) > 0) return;
+    net.hT = 0.25;
     const obj = { role: 'h', gen: net.gen, hb: net.hb, phase: net.phase, mid: net.mid, cfg: netCfg(), seats: seatsInfo(), n: peers.length }, str = JSON.stringify(obj);
-    if (str !== net.sent) { net.sent = str; net.sala.presence(obj).catch(() => {}); renderLobby(); }
+    if (str !== net.sent) {
+      net.sent = str; net.sala.presence(obj).catch(() => {});
+      const vis = JSON.stringify([obj.phase, obj.mid, obj.cfg, obj.seats, obj.n]);
+      if (scene !== 'play' || vis !== net.shown) { net.shown = vis; renderLobby(); }
+    }
   }
   function hostStart() {
     const seats = seatsInfo(), dev = myDevice();
@@ -3558,8 +3566,8 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (pr.hb !== net.hbSeen) { net.hbSeen = pr.hb; net.hbIdle = 0; } else if ((net.hbIdle += dt) > (pr.phase === 'play' ? 8 : 20)) { startHandover(); return; }
     }
     net.gen = pr.gen || 1;
-    const str = JSON.stringify([pr.phase, pr.mid, pr.cfg, pr.seats, pr.n]);
-    if (pr !== net.lastPr) { net.lastPr = pr; net.stale = 0; } else net.stale += dt;
+    let str = net.sent;
+    if (pr !== net.lastPr) { net.lastPr = pr; net.stale = 0; str = JSON.stringify([pr.phase, pr.mid, pr.cfg, pr.seats, pr.n]); } else net.stale += dt; // solo cuando llega algo nuevo
     if (str !== net.sent) {
       net.sent = str; net.view = pr; renderLobby();
       if (scene === 'play' && pr.mid === net.mid && Array.isArray(pr.seats)) {
@@ -3595,7 +3603,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   function guestSync(dt) {
     const g = game, hp = hostPeer(), pr = hp && hp.presence, rs = pr && pr.rs, me = myPeer();
     if (!rs || pr.mid !== net.mid) return;
-    if (rs.r !== g.rally) { VB.netRally(g, rs); net.props = []; net.aheadT = 0; }
+    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); net.props = []; net.aheadT = 0; }
     VB.netRef(g, rs);
     if (pr.pg && typeof pr.pg[me] === 'number' && pr.pg[me] !== net.echo) { // ida y vuelta de mis avisos
       net.echo = pr.pg[me];
@@ -3623,7 +3631,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const hid = head ? head.id : 'r' + g.rally;
     if (hid === g.bid) net.aheadT = 0;
     else if ((net.aheadT += dt) > 3.5) { // mi golpe no llegó o no valió: vuelvo a lo que dice el anfitrión
-      net.aheadT = 0;
+      net.aheadT = 0; net.resync = (net.resync || 0) + 1;
       if (head) { g.chain = [head.id]; VB.netApply(g, head); } else { g.rally = -1; VB.netRally(g, rs); }
     }
   }
@@ -4145,6 +4153,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const dt = Math.min(0.05, (ts - last) / 1000 || 0);
     last = ts;
     const t0 = performance.now();
+    if (dt > 0) fpsE += (1 / dt - fpsE) * 0.05;
     if (dt > 0 && scene === 'play' && !paused && !document.hidden && qLevel < 2) {
       slowT = dt > 0.021 ? slowT + dt : Math.max(0, slowT - dt * 0.5);
       if (slowT > 4) { qLevel++; slowT = 0; resize(); }
