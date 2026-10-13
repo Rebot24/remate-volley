@@ -1658,10 +1658,14 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   function resetFx() { fx.pops.length = fx.parts.length = fx.streaks.length = fx.rings.length = fx.bursts.length = fx.trail.length = fx.winds.length = 0; shake = 0; freeze = 0; zoom.k = 0; rallyShown = 0; }
   function startDemo() { game = makeGame(gameCfg(true)); demo = true; demoOverT = 0; labels = game.players.map(() => ''); resetFx(); if (prof) { setCourt(prof.court); applyKits(game); game.players.forEach(p => { p.kit = 'clasica'; }); } }
-  function startMatch(kind) { // kind: ronda de la copa (número), 'surv' para Supervivencia, o nada para un partido normal
+  // Submarcador de revanchas: partidos ganados por cada equipo mientras se encadenan revanchas (se pone a cero con un partido nuevo)
+  const series = [0, 0];
+  const seriesOn = () => series[0] + series[1] > 0;
+  function startMatch(kind, again) { // kind: ronda de la copa (número), 'surv' para Supervivencia, o nada para un partido normal; again: revancha
     endTut();
     const cup = Number.isInteger(kind) ? kind : null, sv = kind === 'surv';
     lastCup = sv ? 'surv' : cup;
+    if (!(again === true && cup == null && !sv)) series[0] = series[1] = 0;
     game = makeGame(sv ? survCfg() : cup != null ? cupCfg(cup) : gameCfg(false)); demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
     surv = sv ? { g: game, lives: 3, pts: 0, lvl: 0 } : null;
     setCourt(prof.court); applyKits(game); runStart(game, cup);
@@ -2540,6 +2544,12 @@ if (typeof module !== 'undefined') module.exports = VB;
       text('Peloteo ' + r, 0, 0, `700 ${r >= 15 ? 17 : 15}px ${FL}`, r >= 15 ? SUN : PAPER, INK, 4);
       ctx.restore();
     }
+    if (seriesOn() && !(surv && surv.g === g)) for (let t = 0; t < 2; t++) { // submarcador de revanchas
+      const cx = t ? 549 : 411;
+      rrect(cx - 30, 58, 60, 19, [0, 0, 9, 9], 'rgba(21,33,63,.88)');
+      ctx.fillStyle = TEAM[t].l; ctx.strokeStyle = INK; ctx.lineWidth = 1; starAt(ctx, cx - 13, 67.5, 6);
+      text(String(series[t]), cx + 7, 68.5, `700 15px ${FL}`, PAPER);
+    }
     if (g.state !== 'over') { const x = g.serveTeam === 0 ? 358 : 602; ctx.fillStyle = SUN; ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, 34, 6, 0, 7); ctx.fill(); ctx.stroke(); }
   }
   function drawChips(g) {
@@ -3321,7 +3331,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 27; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 28; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3466,7 +3476,8 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (scene !== 'play' || vis !== net.shown) { net.shown = vis; renderLobby(); }
     }
   }
-  function hostStart() {
+  function hostStart(again) {
+    if (again !== true) series[0] = series[1] = 0;
     const seats = seatsInfo(), dev = myDevice();
     net.mid++; net.phase = 'play';
     const hi = net.hostIdx = seats.findIndex(s => s.k === net.hostSeat);
@@ -3605,6 +3616,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (!rs || pr.mid !== net.mid) return;
     if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); net.props = []; net.aheadT = 0; }
     VB.netRef(g, rs);
+    if (Array.isArray(pr.ser) && pr.ser.length === 2) { series[0] = clamp(pr.ser[0] | 0, 0, 999); series[1] = clamp(pr.ser[1] | 0, 0, 999); }
     if (pr.pg && typeof pr.pg[me] === 'number' && pr.pg[me] !== net.echo) { // ida y vuelta de mis avisos
       net.echo = pr.pg[me];
       const rt = ((Math.round(performance.now()) % 1e9) - net.echo) / 1000;
@@ -3741,6 +3753,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const pl = {};
     for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
     const patch = { pl, ab: net.abs.slice() };
+    if (host) patch.ser = series.slice();
     if (host) {
       patch.rs = VB.netRefState(g); patch.head = net.head;
       if (g.state === 'over' && stats.g === g) patch.stx = stats.map(r => r.slice());
@@ -3819,7 +3832,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   // Enlace para invitar: la misma página con el servidor propio y el código de la sala
   function shareLink() { const u = new URL(location.href); u.search = ''; u.hash = ''; if (SRV) u.searchParams.set('srv', SRV.replace(/^wss:\/\//, '').replace(/\/$/, '')); if (net.code) u.searchParams.set('sala', net.code.toUpperCase()); return u.href; }
-  window.rvDebug = () => ({ game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
+  window.rvDebug = () => ({ series, game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
 
   /* ---------- Estadísticas ---------- */
   // Por jugador: puntos, saques directos, remates, colocaciones, recepciones, planchas y fallos
@@ -4105,6 +4118,8 @@ if (typeof module !== 'undefined') module.exports = VB;
   /* ---------- Final ---------- */
   function endMatch() {
     const g = game, w = g.winner, sv = !!(surv && surv.g === g);
+    const counts = !sv && !(run && run.g === g && run.cup != null) && !g.cfg.practice && net.role !== 'g' && (w === 0 || w === 1);
+    if (counts && !g._series) { g._series = true; series[w]++; }
     $('#endTitle').textContent = sv ? 'Supervivencia: ' + surv.pts + (surv.pts === 1 ? ' punto' : ' puntos') : 'Gana el equipo ' + TEAM[w].name;
     $('#endTitle').style.color = sv ? INK : TEAM[w].c;
     $('#endR').textContent = g.score[0]; $('#endB').textContent = g.score[1];
@@ -4116,6 +4131,10 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#btnAgain').textContent = sv ? 'Otra vez' : cupWas == null ? 'Revancha' : prof.cup === 0 ? 'Empezar otra copa' : 'Siguiente ronda';
     setTimeout(() => {
       if (scene !== 'play' || game !== g) return;
+      if (seriesOn() && !sv) { // el invitado ya tiene la serie que manda el anfitrión
+        const lead = series[0] === series[1] ? 'empate' : 'va ganando el ' + TEAM[series[0] > series[1] ? 0 : 1].name;
+        $('#endNote').textContent = 'Serie de revanchas: Rojo ' + series[0] + ' – ' + series[1] + ' Azul (' + lead + '). ' + $('#endNote').textContent;
+      }
       renderStats(g); $('#end').hidden = false; hud.hidden = true;
       // si no cabe, primero sobran las líneas de progreso menos importantes (la primera, la de experiencia, se queda)
       const card = $('#end .card'), ul = $('#endProg'), over = () => card.scrollHeight > card.clientHeight + 1 || $('#end').scrollHeight > $('#end').clientHeight + 1;
@@ -4273,7 +4292,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#tutSkip').addEventListener('click', () => { if (!tut) return; if (!TUT[tut.i]) startMatch(); else nextStep(); });
     const quit = () => (net.sala ? netLeave() : toMenu());
     $('#btnQuit').addEventListener('click', quit);
-    $('#btnAgain').addEventListener('click', () => (net.role === 'h' ? hostStart() : net.sala ? null : startMatch(lastCup === 'surv' ? 'surv' : lastCup != null ? prof.cup : undefined)));
+    $('#btnAgain').addEventListener('click', () => (net.role === 'h' ? hostStart(true) : net.sala ? null : startMatch(lastCup === 'surv' ? 'surv' : lastCup != null ? prof.cup : undefined, true)));
     $('#btnMenu').addEventListener('click', quit);
     $('#btnLobby').addEventListener('click', hostToLobby);
     seg('#lbMode', () => cfg.mode, v => { cfg.mode = +v; });
