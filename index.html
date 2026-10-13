@@ -2683,7 +2683,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (scene === 'play' && net.sala && game.net) { // retardo de ida (aprox.) y por dónde va la conexión, para todos
       const rt = net.role === 'g' ? net.rtt : Math.max(0, ...net.sala.peers().filter(q => !q.sameTab && q.presence && typeof q.presence.lt === 'number').map(q => q.presence.lt / 1000));
       if (rt > 0) {
-        const s = net.sala, kind = s.via ? (s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0) ? 'reserva' + (s.relays && s.relays() > 1 ? ' ×' + s.relays() : '') : 'directa') : 'sala de Claude';
+        const s = net.sala, rel = s.via && (s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0));
+        const kind = !s.via ? 'sala de Claude' : !rel ? 'directa' : SRV && (net.role === 'h' || (s.link && s.link() === SRV)) ? 'servidor propio' : 'reserva' + (s.relays && s.relays() > 1 ? ' ×' + s.relays() : '');
         text(kind + ' · ' + Math.round(rt * 500) + ' ms', 480, 138, `700 13px ${FL}`, rt > 0.4 ? '#FFB1A6' : PAPER, INK, 4);
       }
     }
@@ -3032,7 +3033,17 @@ if (typeof module !== 'undefined') module.exports = VB;
   const RV_PEER = window.RV_PEER || {};
   const PEER_LIB = RV_PEER.lib || 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', PEER_PREFIX = 'remate-volley-';
   // Por orden de preferencia: los dos primeros entregan en unos 40 ms; el tercero frena los mensajes seguidos y queda de último recurso
-  const RELAYS = RV_PEER.relays || ['wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+  // Servidor propio (?srv=...): por ejemplo el ordenador de un amigo con el programa «servidor» y un túnel. Va el primero; los públicos quedan de respaldo.
+  const SRV = (() => {
+    try {
+      let v = (new URLSearchParams(location.search).get('srv') || '').trim();
+      if (!v) return '';
+      if (!/^[a-z]+:\/\//i.test(v)) v = 'wss://' + v;
+      const u = new URL(v.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:'));
+      return u.protocol === 'wss:' || u.protocol === 'ws:' ? u.href : '';
+    } catch (e) { return ''; }
+  })();
+  const RELAYS = RV_PEER.relays || [...(SRV ? [SRV] : []), 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
   const ONLINE_VIA = (() => { try { return new URLSearchParams(location.search).get('online') || ''; } catch (e) { return ''; } })(); // ?online=reserva | directo, para diagnosticar
   const USE_DIRECT = ONLINE_VIA !== 'reserva', USE_RELAY = ONLINE_VIA !== 'directo' && typeof WebSocket === 'function';
   let peerLib = null;
@@ -3224,7 +3235,7 @@ if (typeof module !== 'undefined') module.exports = VB;
           return;
         }
         const best = links.filter(good).sort((a, b) => rankL(a) - rankL(b))[0]; // el preferido de los que tienen al anfitrión (el que recorta, el último)
-        if (!via && best && (directDead || el > 4500) && (best === links[0] || el > 2500) && (rankL(best) < 10 || el > 6000)) { // el directo no llega: entro por el servidor de reserva
+        if (!via && best && (directDead || el > 4500 || (SRV && best.url === SRV)) && (best === links[0] || el > 2500) && (rankL(best) < 10 || el > 6000)) { // el directo no llega: entro por el servidor de reserva
           via = 'relay'; pick = best; seen.set('h', now());
           try { if (peer) peer.destroy(); } catch (e) { /* */ }
         }
@@ -3309,7 +3320,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 25; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 26; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3795,8 +3806,11 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#lbNote').textContent = host
       ? (humans === 1 ? 'Aún no ha entrado nadie. Si empiezas ahora, los huecos libres los juegan bots.' : humans + ' jugadores en la sala. Los huecos libres los juegan bots.') + (watchers ? ' ' + watchers + ' mirando.' : '')
       : seated ? 'Elige personaje y sitio. El anfitrión empieza el partido.' : 'No quedan huecos: verás el partido como espectador.';
+    if (SRV && host) $('#lbNote').textContent += ' Con tu servidor: tus amigos tienen que entrar con este enlace → ' + shareLink();
     fitMenu();
   }
+  // Enlace para invitar: la misma página con el servidor propio y el código de la sala
+  function shareLink() { const u = new URL(location.href); u.search = ''; u.hash = ''; if (SRV) u.searchParams.set('srv', SRV.replace(/^wss:\/\//, '').replace(/\/$/, '')); if (net.code) u.searchParams.set('sala', net.code.toUpperCase()); return u.href; }
   window.rvDebug = () => ({ game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
 
   /* ---------- Estadísticas ---------- */
@@ -4262,6 +4276,10 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#btnCreate').addEventListener('click', netCreate);
     $('#btnJoin').addEventListener('click', netJoin);
     $('#code').addEventListener('keydown', e => { if (e.key === 'Enter') netJoin(); });
+    try { // enlace de invitación (?sala=ABCD): el código ya escrito y la pestaña Online abierta
+      const sq = (new URLSearchParams(location.search).get('sala') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+      if (sq) { $('#code').value = sq; showTab('online'); }
+    } catch (e) { /* */ }
     $('#lbStart').addEventListener('click', hostStart);
     $('#lbLeave').addEventListener('click', () => netLeave());
     netInit();
