@@ -2870,7 +2870,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       } else if (e.type === 'serve') {
         { const sp = game.players.find(q => q.i === e.player); if (sp) sp._srvAt = game.time; }
         const perf = e.q === 'perfect';
-        if (perf) pop(e.x, e.y - 24, '¡Perfecto!', SUN, 26); // solo el saque perfecto lleva mensaje
+        if (perf) pop(e.x, e.y - 24, e.power ? '¡Saque bomba!' : '¡Saque con efecto!', SUN, 26); // solo el saque perfecto lleva mensaje
         ballSq = 0;
         if (perf) { fx.bursts.push({ x: e.x, y: e.y, t: 0, col: e.power ? PAPER : '#3BD992', n: 10, len: 40 }); punch(e.x, e.y, 0.03); }
         if (e.power) { play('spike', perf || e.fire ? 1 : 0.5); shake = Math.max(shake, perf ? 0.25 : 0.1); hitStop(perf ? 0.08 : e.fire ? 0.06 : 0.03); } else { play(perf ? 'spike' : 'serve', 0.4); if (perf) hitStop(0.05); }
@@ -4268,7 +4268,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 45; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 46; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
