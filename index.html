@@ -2680,7 +2680,13 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.restore();
     drawHud(g);
     if (wantLock() && !locked() && performance.now() - lockAskT > 600) text('Haz clic en la pista para bloquear el ratón', 480, 162, `700 15px ${FL}`, PAPER, INK, 4);
-    if (net.role === 'g' && scene === 'play' && net.rtt > 0) text('retardo ' + Math.round(net.rtt * 500) + ' ms', 480, 138, `700 13px ${FL}`, net.rtt > 0.6 ? '#FFB1A6' : PAPER, INK, 4);
+    if (scene === 'play' && net.sala && game.net) { // retardo de ida (aprox.) y por dónde va la conexión, para todos
+      const rt = net.role === 'g' ? net.rtt : Math.max(0, ...net.sala.peers().filter(q => !q.sameTab && q.presence && typeof q.presence.lt === 'number').map(q => q.presence.lt / 1000));
+      if (rt > 0) {
+        const s = net.sala, kind = s.via ? (s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0) ? 'reserva' + (s.relays && s.relays() > 1 ? ' ×' + s.relays() : '') : 'directa') : 'sala de Claude';
+        text(kind + ' · ' + Math.round(rt * 500) + ' ms', 480, 138, `700 13px ${FL}`, rt > 0.4 ? '#FFB1A6' : PAPER, INK, 4);
+      }
+    }
     if (g.state === 'point' && g.lastPoint) {
       drawPointBanner(g);
     } else if (g.state === 'serve' && !demo && g.server && !g.server.isBot && g.stateT > 0.3) {
@@ -3078,7 +3084,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       ws.binaryType = 'arraybuffer'; buf = new Uint8Array(0);
       ws.onopen = () => { send(pkt(0x10, cat(s16('MQTT'), [4, 2, 0, 30], s16('rv' + Math.random().toString(36).slice(2, 14))))); clearInterval(ping); ping = setInterval(() => send(new Uint8Array([0xC0, 0])), 12000); };
       ws.onmessage = e => { if (ws === mine && e.data instanceof ArrayBuffer) feed(new Uint8Array(e.data)); };
-      ws.onclose = () => { if (ws !== mine) return; link.ok = false; clearInterval(ping); again(); };
+      ws.onclose = e => { if (ws !== mine) return; if (window.RV_LOGNET) console.log('mqtt cierre', url, e.code, e.reason, Math.round(performance.now() - link.since)); link.ok = false; clearInterval(ping); again(); };
       ws.onerror = () => { /* le sigue un cierre */ };
     }
     open();
@@ -3094,8 +3100,16 @@ if (typeof module !== 'undefined') module.exports = VB;
       let topGen = gen;
       const store = new Map(), conns = new Map(), seen = new Map(), links = [];
       let peer = null, mine = Object.freeze({}), snap = [], cbs = [], errs = [], hostConn = null, done = false, closed = false;
-      let via = '', pick = null, joinT = 0, directDead = !USE_DIRECT || !window.Peer, noPeer = false, peerOpen = false, foreign = false, beats = 0;
+      let via = '', pick = null, twin = null, joinT = 0, seqOut = 0, directDead = !USE_DIRECT || !window.Peer, noPeer = false, peerOpen = false, foreign = false, beats = 0;
       const now = () => performance.now();
+      // Por el camino de reserva cada mensaje sale por dos servidores a la vez y vale la copia que llegue antes:
+      // cada mensaje lleva un número (q) por remitente y los repetidos o atrasados se descartan.
+      const lastQ = new Map();
+      const fresh = m => { if (typeof m.q !== 'number' || typeof m.from !== 'string') return true; if (m.q <= (lastQ.get(m.from) || 0)) return false; lastQ.set(m.from, m.q); return true; };
+      const LAST = RELAYS.length > 2 ? RELAYS.length - 1 : -1; // el último servidor recorta los mensajes seguidos: solo si no queda otro
+      const good = l => l && l.ok && now() - l.heard < 3000;
+      const rankL = l => (links.indexOf(l) === LAST ? 10 : links.indexOf(l));
+      const up = msg => { if (pick) pick.pub(msg); if (twin && twin !== pick && twin.ok) twin.pub(msg); }; // invitado por reserva: a mis dos servidores
       const rebuild = () => {
         snap = [{ peer: me, sameTab: true, presence: mine }];
         store.forEach((v, k) => snap.push({ peer: k, sameTab: false, presence: v }));
@@ -3109,34 +3123,36 @@ if (typeof module !== 'undefined') module.exports = VB;
       };
       const ready = () => { if (!done) { done = true; resolve(room); } };
       // Anfitrión: a los invitados directos, uno a uno; a los de reserva, una vez por servidor (lo oyen todos los suyos)
-      const busy = l => { let n = false; conns.forEach(c => { if (c.relay === l) n = true; }); return n; };
-      const fan = (msg, exPeer, exLink) => {
-        conns.forEach((c, k) => { if (!c.relay && k !== exPeer && c.open) c.send(msg); });
-        links.forEach(l => { if (l !== exLink && l.ok && busy(l)) l.pub(msg); });
+      const busy = l => { let n = false; conns.forEach(c => { if (c.relays && c.relays.has(l)) n = true; }); return n; };
+      const fan = (msg, exPeer, exLinks) => { // exLinks: servidores donde el remitente ya publicó (allí lo oyen todos sin mí)
+        conns.forEach((c, k) => { if (!c.relays && k !== exPeer && c.open) c.send(msg); });
+        links.forEach(l => { if (!(exLinks && exLinks.has(l)) && l.ok && busy(l)) l.pub(msg); });
       };
       const room = {
         name, peers: () => snap, via: () => via, link: () => (pick ? pick.url : ''), slow: () => (host ? links.some(busy) : via === 'relay'),
         presence: async patch => {
           mine = Object.freeze(Object.assign({}, mine, patch)); rebuild();
-          const msg = { t: 'p', from: me, p: patch };
-          if (host) fan(msg); else if (via === 'relay') pick.pub(msg); else if (hostConn && hostConn.open) hostConn.send(msg);
+          const msg = { t: 'p', from: me, p: patch, q: ++seqOut };
+          if (host) fan(msg); else if (via === 'relay') up(msg); else if (hostConn && hostConn.open) hostConn.send(msg);
         },
         onPeers: (f, onErr) => { cbs.push(f); if (onErr) errs.push(onErr); return () => { cbs = cbs.filter(x => x !== f); errs = errs.filter(x => x !== onErr); }; },
-        leave: async () => { if (closed) return; if (!host && via === 'relay' && pick) pick.pub({ t: 'bye', from: me }); shut(); },
+        leave: async () => { if (closed) return; if (!host && via === 'relay' && pick) up({ t: 'bye', from: me }); shut(); },
+        relays: () => (host ? links.filter(busy).length : [pick, twin].filter(l => l && l.ok).length),
+        dbg: () => links.map(l => ({ url: l.url.slice(-5), ok: l.ok, heard: Math.round(now() - l.heard), pick: l === pick, twin: l === twin, busy: host ? busy(l) : undefined })),
       };
       const drop = k => { // un invitado se ha ido (o lleva demasiado sin dar señales)
         const c = conns.get(k);
         if (!c) return;
-        conns.delete(k); seen.delete(k); store.delete(k); rebuild();
-        if (c.relay) { if (c.relay.ok) c.relay.pub({ t: 'bye', from: k }); } else { try { c.close(); } catch (e) { /* */ } }
-        fan({ t: 'bye', from: k }, k, c.relay);
+        conns.delete(k); seen.delete(k); store.delete(k); lastQ.delete(k); rebuild();
+        if (c.relays) c.relays.forEach(l => { if (l.ok) l.pub({ t: 'bye', from: k }); }); else { try { c.close(); } catch (e) { /* */ } }
+        fan({ t: 'bye', from: k }, k, c.relays);
       };
       const hello = k => { const all = {}; all[me] = mine; store.forEach((v, o) => { if (o !== k) all[o] = v; }); return { t: 'hello', to: k, from: me, peers: all, gen }; };
       const fromHost = m => { // invitado: lo que llega del anfitrión, por cualquiera de los dos caminos
         if (m.t === 'hello' && m.peers && typeof m.peers === 'object') {
           for (const k in m.peers) if (k !== me && m.peers[k] && typeof m.peers[k] === 'object') store.set(k, Object.freeze(m.peers[k]));
           rebuild(); ready();
-        } else if (m.t === 'p' && typeof m.from === 'string' && m.from !== me && m.p && typeof m.p === 'object') { merge(m.from, m.p); rebuild(); }
+        } else if (m.t === 'p' && typeof m.from === 'string' && m.from !== me && m.p && typeof m.p === 'object') { if (fresh(m)) { merge(m.from, m.p); rebuild(); } }
         else if (m.t === 'bye') { if (m.from === me) { if (done) fail('upstream_error'); } else { store.delete(m.from); rebuild(); } }
       };
       const onBus = (l, m) => {
@@ -3152,18 +3168,19 @@ if (typeof module !== 'undefined') module.exports = VB;
           if (typeof k !== 'string' || k === me || k.length > 40) return;
           let c = conns.get(k);
           if (m.t === 'j') {
-            if (c && !c.relay) return; // ya entró por el camino directo
-            if (!c) { c = { peer: k, relay: l, open: true }; conns.set(k, c); } else c.relay = l;
-            seen.set(k, now()); l.pub(hello(k));
-          } else if (c && c.relay === l) {
-            seen.set(k, now());
-            if (m.t === 'p' && m.p && typeof m.p === 'object') { merge(k, m.p); rebuild(); fan({ t: 'p', from: k, p: m.p }, k, l); }
+            if (c && !c.relays) return; // ya entró por el camino directo
+            if (!c) { c = { peer: k, relays: new Set(), open: true }; conns.set(k, c); }
+            const nu = !c.relays.has(l); c.relays.add(l);
+            seen.set(k, now()); if (nu || m.re) l.pub(hello(k));
+          } else if (c && c.relays) {
+            c.relays.add(l); seen.set(k, now());
+            if (m.t === 'p' && m.p && typeof m.p === 'object') { if (fresh(m)) { merge(k, m.p); rebuild(); fan({ t: 'p', from: k, p: m.p, q: m.q }, k, c.relays); } }
             else if (m.t === 'bye') drop(k);
           }
           return;
         }
-        if (m.t === 'b') { const mg = m.gen || 1; if (mg < topGen) return; topGen = mg; l.heard = now(); if (l === pick) seen.set('h', l.heard); return; }
-        if (via !== 'relay' || l !== pick || (m.to && m.to !== me) || m.t === 'j' || m.t === 'k') return;
+        if (m.t === 'b') { const mg = m.gen || 1; if (mg < topGen) return; topGen = mg; l.heard = now(); if (l === pick || l === twin) seen.set('h', l.heard); return; }
+        if (via !== 'relay' || (l !== pick && l !== twin) || (m.to && m.to !== me) || m.t === 'j' || m.t === 'k') return;
         if (m.t === 'hello' && (m.gen || 1) < topGen) return; // de un anfitrión ya sustituido
         fromHost(m);
       };
@@ -3172,26 +3189,33 @@ if (typeof module !== 'undefined') module.exports = VB;
         if (closed) { clearInterval(beat); return; }
         const t = now(); beats++;
         if (host) {
-          conns.forEach((c, k) => { if (!c.relay && c.open) c.send({ t: 'k' }); if (t - (seen.get(k) || t) > 6000) drop(k); });
+          conns.forEach((c, k) => { if (!c.relays && c.open) c.send({ t: 'k' }); if (t - (seen.get(k) || t) > 6000) drop(k); });
           links.forEach(l => {
             if (!l.ok) return;
             l.pub({ t: 'b', from: me, n: nonce, gen });
-            if (beats % 8 === 0 && busy(l)) { l.pub({ t: 'p', from: me, p: mine }); conns.forEach((c, k) => { if (c.relay !== l && store.has(k)) l.pub({ t: 'p', from: k, p: store.get(k) }); }); } // por si se perdió algo
+            if (beats % 8 === 0 && busy(l)) { l.pub({ t: 'p', from: me, p: mine }); conns.forEach((c, k) => { if (!(c.relays && c.relays.has(l)) && store.has(k)) l.pub({ t: 'p', from: k, p: store.get(k) }); }); } // por si se perdió algo
           });
         } else if (done) {
           if (via === 'relay') {
             if (t - pick.heard > 2500) { // mi servidor se ha callado: si el anfitrión sigue en otro, me paso a ese
-              const alt = links.find(l => l !== pick && l.ok && t - l.heard < 1500);
-              if (alt) { pick = alt; seen.set('h', t); alt.pub({ t: 'j', from: me }); alt.pub({ t: 'p', from: me, p: mine }); }
+              const alt = good(twin) ? twin : links.filter(l => l !== pick && l.ok && t - l.heard < 1500).sort((a, b) => rankL(a) - rankL(b))[0];
+              if (alt) { if (alt === twin) twin = null; pick = alt; seen.set('h', t); alt.pub({ t: 'j', from: me }); alt.pub({ t: 'p', from: me, p: mine }); }
+            } else if (rankL(pick) === 10) { // estoy en el servidor que recorta mensajes: en cuanto otro tenga al anfitrión, me cambio
+              const better = links.find(l => l !== pick && rankL(l) < 10 && good(l));
+              if (better) { if (better === twin) twin = null; pick = better; better.pub({ t: 'j', from: me, re: 1 }); better.pub({ t: 'p', from: me, p: mine }); }
             }
-            pick.pub(beats % 8 === 0 ? { t: 'p', from: me, p: mine } : { t: 'k', from: me });
+            if (!good(twin) || twin === pick) { // segundo servidor de respaldo (nunca el que recorta)
+              const nt = links.find(l => l !== pick && rankL(l) < 10 && good(l)) || null;
+              if (nt && nt !== twin) { twin = nt; nt.pub({ t: 'j', from: me }); nt.pub({ t: 'p', from: me, p: mine }); } else if (!nt) twin = null;
+            }
+            up(beats % 8 === 0 ? { t: 'p', from: me, p: mine } : { t: 'k', from: me });
           } else if (hostConn && hostConn.open) hostConn.send({ t: 'k' });
           if (t - (seen.get('h') || t) > 6000) { store.clear(); rebuild(); fail('upstream_error'); }
         }
       }, 500);
       const step = setInterval(() => { // arranque: decide por dónde se entra, o cuándo se da por imposible
         if (done || closed) { clearInterval(step); return; }
-        const el = now() - t0, up = links.some(l => l.ok);
+        const el = now() - t0, anyUp = links.some(l => l.ok);
         if (host) {
           if (peerOpen) ready();
           else if (foreign) fail('taken');
@@ -3199,13 +3223,13 @@ if (typeof module !== 'undefined') module.exports = VB;
           else if (el > 20000 || (directDead && !USE_RELAY)) fail('upstream_error');
           return;
         }
-        const best = links.find(l => l.ok && now() - l.heard < 3000); // el preferido de los que tienen al anfitrión
-        if (!via && best && (directDead || el > 4500) && (best === links[0] || el > 2500)) { // el directo no llega: entro por el servidor de reserva
+        const best = links.filter(good).sort((a, b) => rankL(a) - rankL(b))[0]; // el preferido de los que tienen al anfitrión (el que recorta, el último)
+        if (!via && best && (directDead || el > 4500) && (best === links[0] || el > 2500) && (rankL(best) < 10 || el > 6000)) { // el directo no llega: entro por el servidor de reserva
           via = 'relay'; pick = best; seen.set('h', now());
           try { if (peer) peer.destroy(); } catch (e) { /* */ }
         }
-        if (via === 'relay') { if (now() - joinT > 900) { joinT = now(); pick.pub({ t: 'j', from: me }); pick.pub({ t: 'p', from: me, p: mine }); } if (el > 16000) fail('upstream_error'); return; }
-        if (directDead && !best && (el > 9000 || !USE_RELAY)) fail(noPeer || !USE_DIRECT ? 'no_room' : up || !USE_RELAY ? 'blocked' : 'upstream_error');
+        if (via === 'relay') { if (now() - joinT > 900) { joinT = now(); up({ t: 'j', from: me }); up({ t: 'p', from: me, p: mine }); } if (el > 16000) fail('upstream_error'); return; }
+        if (directDead && !best && (el > 9000 || !USE_RELAY)) fail(noPeer || !USE_DIRECT ? 'no_room' : anyUp || !USE_RELAY ? 'blocked' : 'upstream_error');
         else if (el > 20000) fail('upstream_error');
       }, 200);
       addEventListener('pagehide', () => { room.leave(); });
@@ -3285,7 +3309,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 24; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 25; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3694,7 +3718,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     g.net.out.length = 0; g.net.abOut.length = 0;
     net.sendT -= dt;
     if (!hot && net.sendT > 0) return;
-    net.sendT = net.sala.slow && net.sala.slow() ? 0.06 : 0.033; // por el servidor de reserva, algo menos de tráfico
+    net.sendT = net.sala.slow && net.sala.slow() ? 0.05 : 0.033; // por el servidor de reserva, algo menos de tráfico
     const pl = {};
     for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
     const patch = { pl, ab: net.abs.slice() };
