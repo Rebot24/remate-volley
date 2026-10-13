@@ -3247,8 +3247,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         }
         const best = links.filter(good).sort((a, b) => rankL(a) - rankL(b))[0]; // el preferido de los que tienen al anfitrión (el que recorta, el último)
         if (!via && best && (directDead || el > 4500 || (SRV && best.url === SRV)) && (best === links[0] || el > 2500) && (rankL(best) < 10 || el > 6000)) { // el directo no llega: entro por el servidor de reserva
-          via = 'relay'; pick = best; seen.set('h', now());
-          try { if (peer) peer.destroy(); } catch (e) { /* */ }
+          via = 'relay'; pick = best; seen.set('h', now()); // la directa sigue intentándose por detrás: si llega, me paso a ella
         }
         if (via === 'relay') { if (now() - joinT > 900) { joinT = now(); up({ t: 'j', from: me }); up({ t: 'p', from: me, p: mine }); } if (el > 16000) fail('upstream_error'); return; }
         if (directDead && !best && (el > 9000 || !USE_RELAY)) fail(noPeer || !USE_DIRECT ? 'no_room' : anyUp || !USE_RELAY ? 'blocked' : 'upstream_error');
@@ -3267,28 +3266,52 @@ if (typeof module !== 'undefined') module.exports = VB;
         else if (t === 'browser-incompatible' && !USE_RELAY) fail('not_permitted');
         else directDead = true;
       });
-      peer.on('disconnected', () => { setTimeout(() => { if (!closed && via !== 'relay') { try { peer.reconnect(); } catch (e) { /* */ } } }, 1500); });
-      peer.on('open', () => {
-        if (host) { peerOpen = true; return; }
-        if (via) return;
-        hostConn = peer.connect(hostId, { reliable: true, serialization: 'json' });
-        hostConn.on('open', () => { if (via) return; hostConn.send({ t: 'p', from: me, p: mine }); });
-        hostConn.on('data', m => {
-          if (via === 'relay') return;
-          seen.set('h', now());
+      peer.on('disconnected', () => { setTimeout(() => { if (!closed && !peer.destroyed) { try { peer.reconnect(); } catch (e) { /* */ } } }, 1500); });
+      // Conexión directa con el anfitrión. A través de routers puede tardar más que la de reserva: si se entra por reserva,
+      // se sigue intentando por detrás (y se reintenta cada 15 s) y en cuanto abre, el partido pasa a ir por ella.
+      // Si la directa se cae después, se vuelve a la de reserva sin cortar.
+      const tryDirect = () => {
+        if (closed || !peer || peer.destroyed || peer.disconnected && !peer.open) return;
+        directT = now();
+        const hc = peer.connect(hostId, { reliable: true, serialization: 'json' });
+        hostConn = hc;
+        hc.on('open', () => { if (hostConn !== hc || via === 'direct') return; hc.send({ t: 'p', from: me, p: mine, q: ++seqOut }); });
+        hc.on('data', m => {
+          if (hostConn !== hc || closed) return;
           if (!m || typeof m !== 'object') return;
-            if (m.t === 'hello' && !via) { via = 'direct'; links.forEach(l => l.close()); }
+          if (m.t === 'hello' && via !== 'direct') {
+            const upgraded = via === 'relay'; via = 'direct';
+            if (!upgraded) links.forEach(l => l.close()); // entré directo: la reserva sobra (si subí desde reserva, la guardo de respaldo)
+          }
+          if (via !== 'direct') return;
+          seen.set('h', now());
           fromHost(m);
         });
-        hostConn.on('error', () => { if (!via) directDead = true; });
-        hostConn.on('close', () => { if (via === 'direct') { store.clear(); rebuild(); } else if (!via) directDead = true; });
+        hc.on('error', () => { if (hostConn === hc && !via) directDead = true; });
+        hc.on('close', () => {
+          if (hostConn !== hc) return;
+          if (via === 'direct' && pick && links.some(l => l.ok)) { via = 'relay'; seen.set('h', now()); up({ t: 'j', from: me, re: 1 }); up({ t: 'p', from: me, p: mine }); } // vuelta a la reserva
+          else if (via === 'direct') { store.clear(); rebuild(); }
+          else if (!via) directDead = true;
+        });
+      };
+      let directT = 0;
+      peer.on('open', () => {
+        if (host) { peerOpen = true; return; }
+        if (via === 'direct') return;
+        tryDirect();
       });
+      const retry = setInterval(() => { // reintento de la directa mientras se juega por reserva
+        if (closed) { clearInterval(retry); return; }
+        if (!host && via === 'relay' && peer && peer.open && (!hostConn || !hostConn.open) && now() - directT > 15000) tryDirect();
+      }, 3000);
       if (host) peer.on('connection', c => {
         const k = c.peer;
         const gone = () => { if (conns.get(k) === c) drop(k); };
         c.on('open', () => {
-          if (conns.has(k)) { try { c.close(); } catch (e) { /* */ } return; } // ya entró por el de reserva
-          conns.set(k, c); seen.set(k, now()); c.send(hello(k));
+          const old = conns.get(k);
+          if (old && !old.relays) { try { c.close(); } catch (e) { /* */ } return; } // ya tiene una directa
+          conns.set(k, c); seen.set(k, now()); c.send(hello(k)); // nueva, o mejora desde la reserva: a partir de ahora va por aquí
         });
         c.on('data', m => {
           if (conns.get(k) !== c) return;
@@ -3331,7 +3354,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 28; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 29; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
