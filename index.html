@@ -943,7 +943,7 @@ const VB = (() => {
   }
 
   function setupServe(g) {
-    g.state = 'serve'; g.stateT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = -1;
+    g.state = 'serve'; g.stateT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = -1; g.toss = null;
     g.env.slowT = 0; g.env.wallT = 0; g.rallyHits = 0; g.pred = null;
     g.rally = (g.rally || 0) + 1; g.bid = 'r' + g.rally; g.chain = [g.bid]; g.landed = null;
     g.serveLive = false; g.serveRecv = false; g.lastBy = -1;
@@ -1226,7 +1226,7 @@ const VB = (() => {
     const pressed = k => inp[k] && !p.prev[k];
     const wasGround = movePlayer(g, p, inp.x || 0, !!inp.down, pressed('jump'), pressed('down'), dt, true);
     if (!p.dive && p.rec <= 0) {
-      if (!g.ball.held && g.state === 'rally') { const dxb = g.ball.x - p.x; if (Math.abs(dxb) > 12) p.face = Math.sign(dxb); }
+      if (!g.ball.held && g.state === 'rally') { const dxb = g.ball.x - p.x; if (Math.abs(dxb) > 26) p.face = Math.sign(dxb); } // margen: no se gira cada vez que el balón le pasa por encima
       else p.face = dirOf(p.team);
     }
     if (p.swing) p.swing.t += dt;
@@ -1491,11 +1491,22 @@ const VB = (() => {
 
     if (g.state === 'serve') {
       const s = g.server;
-      placeHeld(g); g.stateT += dt;
+      g.stateT += dt;
+      if (g.toss) { // saque en salto: lanza el balón, salta y lo golpea arriba
+        const T = g.toss, b = g.ball, d = dirOf(s.team); T.t += dt;
+        const tb = T.t; b.x = s.x + d * (14 + 18 * Math.min(1, tb / T.tc)); b.y = T.y0 - (T.vb * tb - 0.5 * G * tb * tb);
+        if (!T.jumped && tb >= T.tj) { T.jumped = true; s.vy = -v0Of(s.ch); s.onGround = false; emit(g, { type: 'jump', x: s.x, player: s.i }); }
+        if (tb >= T.tc) { g.toss = null; doServe(g, s, true); }
+      } else placeHeld(g);
       if (ref && g.timed && g.clock <= 0 && g.score[0] !== g.score[1]) { g.winner = g.score[0] > g.score[1] ? 0 : 1; finish(g); }
-      else if (g.stateT > 0.45 && !s.remote) {
+      else if (g.stateT > 0.45 && !s.remote && !g.toss && g.state === 'serve') {
         const pr = k => s.input[k] && !s.prev[k];
-        if (pr('spike')) doServe(g, s, true);
+        if (pr('spike') && s.onGround) { // el balón sube lo justo para golpearlo en lo más alto del salto
+          const y0 = s.y - s.ch.h * 0.6, tj = v0Of(s.ch) / GP, contact = s.y - s.ch.h - apexOf(s.ch) - 18;
+          const vb = Math.sqrt(2 * G * Math.max(40, y0 - contact + 24)), tA = vb / G, tc = tA + Math.sqrt(2 * 24 / G);
+          g.toss = { t: 0, y0, vb, tc, tj: Math.max(0.12, tc - tj), jumped: false };
+          emit(g, { type: 'toss', player: s.i });
+        }
         else if (pr('bump') || pr('set')) doServe(g, s, false);
         else if (g.stateT > 8) doServe(g, s, false);
       }
@@ -1591,7 +1602,7 @@ const VB = (() => {
   function restartPoint(g) { if (g.state === 'over') return; setupServe(g); }
   function netRally(g, rs) {
     g.rally = num(rs.r) | 0; g.bid = 'r' + g.rally; g.chain = [g.bid]; g.landed = null;
-    g.state = 'serve'; g.stateT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = -1; g.rallyHits = 0; g.pred = null;
+    g.state = 'serve'; g.stateT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = -1; g.rallyHits = 0; g.pred = null; g.toss = null;
     g.env.slowT = 0; g.env.wallT = 0; g.serveLive = false; g.serveRecv = false; g.lastBy = -1;
     g.serveTeam = rs.sv === 1 ? 1 : 0; g.server = g.players[rs.si] || g.players[0];
     const hx = Array.isArray(rs.hx) ? rs.hx : [];
@@ -2638,6 +2649,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const t = clock + (o.ph || 0), u = clamp(o.u || 0, 0, 0.999), cyc = (n, fps) => Math.floor(t * fps) % n;
     if (o.pose === 'dive') { const k = clamp(o.dk || 0, 0, 0.999); return o.drec ? ['slide', 5 + Math.floor(k * 10)] : ['slide', 1 + Math.floor(k * 4)]; }
     if (o.stun) return ['rec', 10];
+    if (o.toss) return o.air ? ['smash', (o.vy || 0) < -120 ? 4 : 5] : ['serve', 0]; // saque en salto: lanza, sube armando el brazo
     if (o.pose === 'spike') return o.air ? ['smash', 5 + Math.floor(u * 6)] : o.srv ? ['serve', u < 0.2 ? 1 : 2] : ['gspike', u < 0.15 ? 0 : u < 0.35 ? 1 : 2]; // saque / remate sin saltar
     if (o.serving) return ['idle', 0]; // de pie con el balón en la mano, sin moverse // balón en la mano, listo para lanzarlo // con el balón, a punto de sacar
     if (o.pose === 'bump') return ['rec', 2 + Math.floor(u * 7)];
@@ -2656,15 +2668,16 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (o.air) { const vy = o.vy || 0; return vy < -150 ? ['smash', 3] : ['block', 4]; } // salto normal: impulso con los brazos y caída neutra
     if ((o.land || 9) < 0.12) return ['smash', 11];
     if (o.pose === 'sad') return ['lose', cyc(2, 1.2)]; // derrota: hombros caídos, cabeza gacha
-    if ((o.speed || 0) > 30) { const r = ((o.run % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2); const i = Math.floor(r / (Math.PI * 2) * 12) % 12; return ['run', i]; }
+    if ((o.speed || 0) > 30) { const r = (((o.run * 0.55) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2); const i = Math.floor(r / (Math.PI * 2) * 12) % 12; return ['run', i]; } // zancada tranquila
     if (o.pose === 'ready') return ['rec', cyc(2, 3)];
     return ['idle', cyc(12, 8)];
   }
   function drawSprite(c, o) {
-    const [name, fr0, hop = 0, flip = 0] = sprFrame(o), id = CHARS.some(q => q.id === o.ch.id) ? o.ch.id : 'brasa';
-    const kit = o.kit || 'clasica', v = sprVariant(name, id, o.team, kit, !!o.shadow), S0 = v.S, fr = Math.min(S0.frames - 1, fr0);
+    const [name, fr0, hop = 0, flip = 0] = sprFrame(o); if (window.__animLog && o.logId != null) window.__animLog.push([o.logId, name, fr0, o.face * (flip ? -1 : 1), o.pose]);
+    const id = CHARS.some(q => q.id === o.ch.id) ? o.ch.id : 'brasa';
+    const kit = o.kit || 'clasica', v = sprVariant(name, id, o.team, kit, !!o.shadow), S0 = v.S, fr = Math.min(S0.frames - 1, fr0), sq = o.sx || 1;
     const k = o.ch.h / 40.5, ax = name === 'slide' ? S0.midx[fr] : S0.fw / 2, by = S0.foot[fr];
-    c.save(); c.scale(o.face * k * (flip ? -1 : 1), k);
+    c.save(); c.scale(o.face * k * (flip ? -1 : 1) * sq, k);
     const prev = c.imageSmoothingEnabled; c.imageSmoothingEnabled = false;
     if (o.shadow && !qLevel) { c.shadowColor = TEAM[o.team].c; c.shadowBlur = 8; }
     c.drawImage(v.cv, fr * S0.fw, 0, S0.fw, S0.h, -ax, -by + hop, S0.fw, S0.h);
@@ -3041,6 +3054,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     bg.style.transformOrigin = (ox + fx * sc).toFixed(1) + 'px ' + (oy + fy * sc).toFixed(1) + 'px';
     bg.style.transform = `translate(${(sx * sc).toFixed(1)}px,${(sy * sc).toFixed(1)}px) scale(${z.toFixed(4)})`; bgMoved = true;
   }
+  const TURN = 0.14; // tiempo de darse la vuelta
   function draw() {
     const g = game;
     mainCtx.setTransform(1, 0, 0, 1, 0, 0); mainCtx.clearRect(0, 0, cv.width, cv.height);
@@ -3118,7 +3132,11 @@ if (typeof module !== 'undefined') module.exports = VB;
         const ql = clock - (p._sq || -9), qs = clock - (p._st || -9); // al caer se aplasta un poco; al saltar se estira
         if (ql < 0.16) { const a = Math.sin((ql / 0.16) * Math.PI) * 0.13; ctx.scale(1 + a, 1 - a); }
         else if (qs < 0.18 && !p.onGround) { const a = (1 - qs / 0.18) * 0.1; ctx.scale(1 - a * 0.6, 1 + a); }
-        drawChar(ctx, { ch: p.ch, team: p.team, face: p.onGround && Math.abs(p.vx) > 30 && (pose === 'idle' || pose === 'ready' || pose === 'cheer' || pose === 'sad') ? Math.sign(p.vx) : p.face, run: pose === 'cheer' ? clock * 7 : p.anim.run, speed: Math.abs(p.vx), air: !p.onGround, vy: p.vy, u: u || 0, land: clock - (p._sq || -9), ph: p.i * 1.7, serving: g.state === 'serve' && g.server === p && !k, srv: g.time - (p._srvAt ?? -9) < 0.4, pose, k, stun: p.stun > 0, kit: p.kit, shadow: p.shadow });
+        const want = p.onGround && Math.abs(p.vx) > 30 && (pose === 'idle' || pose === 'ready' || pose === 'cheer' || pose === 'sad') ? Math.sign(p.vx) : p.face;
+        if (p._fc == null) p._fc = want;
+        if (want !== p._fc && !(clock - (p._tT ?? -9) < TURN)) { p._tFrom = p._fc; p._fc = want; p._tT = clock; } // empieza a girarse
+        const tq = (clock - (p._tT ?? -9)) / TURN, turning = tq < 1;
+        drawChar(ctx, { ch: p.ch, team: p.team, face: turning && tq < 0.5 ? p._tFrom : p._fc, sx: turning ? Math.max(0.35, Math.abs(1 - 2 * tq)) : 1, toss: !!(g.toss && g.server === p), run: pose === 'cheer' ? clock * 7 : p.anim.run, speed: Math.abs(p.vx), air: !p.onGround, vy: p.vy, u: u || 0, land: clock - (p._sq || -9), ph: p.i * 1.7, logId: p.i, serving: g.state === 'serve' && g.server === p && !k, srv: g.time - (p._srvAt ?? -9) < 0.4, pose, k, stun: p.stun > 0, kit: p.kit, shadow: p.shadow });
       }
       ctx.restore();
       if (p.stun > 0) top2.push(() => {
@@ -3199,7 +3217,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
     if (g.state === 'point' && g.lastPoint) {
       drawPointBanner(g);
-    } else if (g.state === 'serve' && !demo && g.server && !g.server.isBot && g.stateT > 0.3) {
+    } else if (g.state === 'serve' && !g.toss && !demo && g.server && !g.server.isBot && g.stateT > 0.3) {
       const d = g.server.control;
       const hint = KB[d] ? keyName(KB[d].spike[0]) + ': saque potente · ' + keyName(KB[d].bump[0]) + ': saque seguro'
         : d.startsWith('pad') ? 'B saque potente · X saque seguro' : 'Rematar: saque potente · Recibir: saque seguro';
@@ -4232,7 +4250,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 42; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 43; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
