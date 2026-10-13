@@ -42,7 +42,7 @@ button { cursor: pointer; }
 /* ---------- Pista ---------- */
 #stage { position: absolute; inset: 0; display: grid; grid-template: "cv" 1fr / 1fr; background: var(--ink); }
 #cv, #bgcv { grid-area: cv; display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
-#bgcv { will-change: transform; image-rendering: crisp-edges; image-rendering: pixelated; }
+#bgcv { will-change: transform; }
 #cv { position: relative; z-index: 1; } /* el fondo fijo va en su propia capa: no se repinta en cada fotograma */
 #padL, #padR { display: none; }
 #padL { grid-area: l; } #padR { grid-area: r; }
@@ -1742,6 +1742,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const FL = "'Barlow Condensed','Arial Narrow',system-ui,sans-serif";
   const FP = "'Pixelify Sans','Lilita One',system-ui,sans-serif"; // letra pixelada para todo lo que sale en la pista
   // Pixel art: la pista se pinta a media resolución (cada píxel del dibujo = 2 de la pista, como los jugadores) y se amplía sin suavizar
+  const PIXEL = false; // true: pista entera en pixel art (probado en la v41); false: los gráficos de siempre
   const LW = 480, LH = 270;
   const lowA = document.createElement('canvas'), lowB = document.createElement('canvas');
   lowA.width = lowB.width = LW; lowA.height = lowB.height = LH;
@@ -2418,9 +2419,9 @@ if (typeof module !== 'undefined') module.exports = VB;
     c.putImageData(im, 0, 0);
   }
   function renderBg() {
-    bg.width = LW; bg.height = LH; // el fondo, a la resolución del pixel art
+    if (PIXEL) { bg.width = LW; bg.height = LH; } else { bg.width = cv.width; bg.height = cv.height; }
     const c = bg.getContext('2d'), T = THEME[court] || THEME.pabellon;
-    c.setTransform(LW / W, 0, 0, LW / W, 0, 0);
+    if (PIXEL) c.setTransform(LW / W, 0, 0, LW / W, 0, 0); else c.setTransform(S, 0, 0, S, 0, 0);
     ({ playa: backPlaya, noche: backNoche, nieve: backNieve, azotea: backAzotea }[court] || backPabellon)(c);
     bunting(c, T);
     courtLines(c);
@@ -2450,7 +2451,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     c.fillStyle = INK; c.fillRect(NETX - 2.5, NET_TOP - 12, 5, GROUND - NET_TOP + 16);
     c.fillStyle = PAPER; c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.roundRect(NETX - 9, NET_TOP - 4, 18, 9, 3); c.fill(); c.stroke();
     c.fillStyle = SUN; c.beginPath(); c.arc(NETX, NET_TOP - 14, 4.5, 0, 7); c.fill(); c.stroke();
-    c.setTransform(1, 0, 0, 1, 0, 0); pixelize(c, LW, LH, 18);
+    if (PIXEL) { c.setTransform(1, 0, 0, 1, 0, 0); pixelize(c, LW, LH, 18); }
   }
 
   /* ---------- Personajes ---------- */
@@ -2992,10 +2993,10 @@ if (typeof module !== 'undefined') module.exports = VB;
     // Marcador
     rrect(368, 8, 224, 52, 14, INK);
     rrect(372, 12, 78, 44, 10, TEAM[0].c); rrect(510, 12, 78, 44, 10, TEAM[1].c);
-    text(String(g.score[0]), 411, 36, `34px ${FP}`, PAPER); text(String(g.score[1]), 549, 36, `34px ${FP}`, PAPER);
-    if (g.timed) { const s = Math.ceil(g.clock); text(g.clock <= 0 ? 'ORO' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'), 480, 26, `700 16px ${FP}`, g.clock < 10 ? SUN : '#AFC0E6'); }
-    else if (g.cfg.surv && surv && surv.g === g) text('♥'.repeat(Math.max(0, surv.lives)) + '♡'.repeat(Math.max(0, 3 - surv.lives)), 480, 26, `700 15px ${FP}`, '#FF8A80');
-    else text('A ' + g.cfg.points, 480, 26, `700 14px ${FP}`, '#AFC0E6');
+    text(String(g.score[0]), 411, 36, `34px ${FD}`, PAPER); text(String(g.score[1]), 549, 36, `34px ${FD}`, PAPER);
+    if (g.timed) { const s = Math.ceil(g.clock); text(g.clock <= 0 ? 'ORO' : Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'), 480, 26, `700 16px ${FL}`, g.clock < 10 ? SUN : '#AFC0E6'); }
+    else if (g.cfg.surv && surv && surv.g === g) text('♥'.repeat(Math.max(0, surv.lives)) + '♡'.repeat(Math.max(0, 3 - surv.lives)), 480, 26, `700 15px ${FL}`, '#FF8A80');
+    else text('A ' + g.cfg.points, 480, 26, `700 14px ${FL}`, '#AFC0E6');
     // Toques usados por el equipo que tiene el balón
     const side = VB.sideOf(g.ball.x);
     for (let i = 0, n = g.maxTouches; i < n; i++) {
@@ -3005,14 +3006,14 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (g.state === 'rally' && (g.rallyHits || 0) >= 5) { // contador de peloteo
       const r = g.rallyHits, pz = rallyPulse < 0.25 ? 1 + Math.sin((rallyPulse / 0.25) * Math.PI) * 0.25 : 1;
       ctx.save(); ctx.translate(480, 116); ctx.scale(pz, pz);
-      text('Peloteo ' + r, 0, 0, `700 ${r >= 15 ? 17 : 15}px ${FP}`, r >= 15 ? SUN : PAPER, INK, 4);
+      text('Peloteo ' + r, 0, 0, `700 ${r >= 15 ? 17 : 15}px ${FL}`, r >= 15 ? SUN : PAPER, INK, 4);
       ctx.restore();
     }
     if (seriesOn() && !(surv && surv.g === g)) for (let t = 0; t < 2; t++) { // submarcador de revanchas
       const cx = t ? 549 : 411;
       rrect(cx - 30, 58, 60, 19, [0, 0, 9, 9], 'rgba(21,33,63,.88)');
       ctx.fillStyle = TEAM[t].l; ctx.strokeStyle = INK; ctx.lineWidth = 1; starAt(ctx, cx - 13, 67.5, 6);
-      text(String(series[t]), cx + 7, 68.5, `700 15px ${FP}`, PAPER);
+      text(String(series[t]), cx + 7, 68.5, `700 15px ${FL}`, PAPER);
     }
     if (g.state !== 'over') { const x = g.serveTeam === 0 ? 358 : 602; ctx.fillStyle = SUN; ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, 34, 6, 0, 7); ctx.fill(); ctx.stroke(); }
   }
@@ -3022,11 +3023,11 @@ if (typeof module !== 'undefined') module.exports = VB;
       const t = p.team, y = 12 + rows[t]++ * 30;
       const lab = labels[i] && labels[i].length > 4 ? labels[i] : (labels[i] ? labels[i] + ' · ' : '') + charName(p);
       // el nombre manda: la placa crece y la barra de habilidad va siempre detrás del texto
-      ctx.font = `700 15px ${FP}`; const tw = Math.min(ctx.measureText(lab).width, 190), bw = 46, pw = Math.max(150, 25 + tw + 10 + bw + 10);
+      ctx.font = `700 15px ${FL}`; const tw = Math.min(ctx.measureText(lab).width, 190), bw = 46, pw = Math.max(150, 25 + tw + 10 + bw + 10);
       const x = t === 0 ? 12 : W - 12 - pw;
       rrect(x, y, pw, 25, 8, 'rgba(21,33,63,.82)');
       ctx.fillStyle = TEAM[t].c; ctx.beginPath(); ctx.arc(x + 13, y + 12.5, 6, 0, 7); ctx.fill();
-      text(lab, x + 25, y + 13.5, `700 15px ${FP}`, PAPER, null, 0, 'left');
+      text(lab, x + 25, y + 13.5, `700 15px ${FL}`, PAPER, null, 0, 'left');
       const k = 1 - clamp(p.cd / p.ch.ab.cd, 0, 1), bx = x + pw - 10 - bw;
       rrect(bx, y + 8, bw, 9, 4.5, '#3A4A78');
       if (k > 0.02) rrect(bx, y + 8, bw * k, 9, 4.5, k >= 1 ? SUN : '#8FA3D6');
@@ -3044,16 +3045,17 @@ if (typeof module !== 'undefined') module.exports = VB;
     const g = game;
     mainCtx.setTransform(1, 0, 0, 1, 0, 0); mainCtx.clearRect(0, 0, cv.width, cv.height);
     // en el móvil el temblor salta de 2 en 2 píxeles de la pista, como el resto del dibujo
-    const sx = shake > 0 ? Math.round((Math.random() - 0.5) * shake * 11) * 2 : 0, sy = shake > 0 ? Math.round((Math.random() - 0.5) * shake * 8) * 2 : 0;
+    const sx = shake > 0 ? (Math.random() - 0.5) * shake * 22 : 0, sy = shake > 0 ? (Math.random() - 0.5) * shake * 16 : 0;
+    const LA = PIXEL ? lctxA : mainCtx, LB = PIXEL ? lctxB : mainCtx;
     let z = 1, fxp = 480, fyp = 270;
     if (zoom.k > 0) { z = 1 + zoom.k; fxp = lerp(480, zoom.x, 0.6); fyp = lerp(270, zoom.y, 0.6); }
     const world = (c, k) => { c.setTransform(k, 0, 0, k, 0, 0); c.translate(sx, sy); if (z !== 1) { c.translate(fxp, fyp); c.scale(z, z); c.translate(-fxp, -fyp); } };
-    for (const c of [lctxA, lctxB]) { c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, LW, LH); world(c, LW / W); }
+    if (PIXEL) for (const c of [lctxA, lctxB]) { c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, LW, LH); world(c, LW / W); }
     world(mainCtx, S);
-    const blit = img => { mainCtx.save(); mainCtx.setTransform(1, 0, 0, 1, 0, 0); mainCtx.imageSmoothingEnabled = false; mainCtx.drawImage(img, 0, 0, cv.width, cv.height); mainCtx.restore(); };
+    const blit = img => { if (!PIXEL) return; mainCtx.save(); mainCtx.setTransform(1, 0, 0, 1, 0, 0); mainCtx.imageSmoothingEnabled = false; mainCtx.drawImage(img, 0, 0, cv.width, cv.height); mainCtx.restore(); };
     const over = [], top2 = []; // por encima, a resolución completa: nombres, flechas y textos; y lo que va en la capa de arriba
     moveBg(sx, sy, z, fxp, fyp); // el temblor y el acercamiento también mueven la capa del fondo
-    ctx = lctxA; // capa pixelada de abajo: público, sombras, marcas y auras
+    ctx = LA; // capa pixelada de abajo: público, sombras, marcas y auras
     drawCrowd(); drawAmbient();
     const env = g.env, b = ballOff.x || ballOff.y ? Object.assign({}, g.ball, { x: g.ball.x + ballOff.x, y: g.ball.y + ballOff.y }) : g.ball; // online: el salto tras un golpe ajeno se suaviza
     // Gravedad lunar
@@ -3130,7 +3132,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       });
       const lab = labels[p.i];
       over.push(() => {
-      if (lab) text(lab, p.x, top, `700 13px ${FP}`, PAPER, TEAM[p.team].d, 4);
+      if (lab) text(lab, p.x, top, `700 14px ${FL}`, PAPER, TEAM[p.team].d, 4);
       if (ready) { ctx.fillStyle = SUN; ctx.strokeStyle = INK; ctx.lineWidth = 2; star(p.x + (lab ? 22 : 0), top - 1, 6); }
       if (p === nextP) { // flecha que bota: «te toca»
         const ay = top - 16 + Math.sin(clock * 9) * 3;
@@ -3139,7 +3141,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       }
       });
     }
-    ctx = lctxB; // capa pixelada de arriba: balón, estelas, chispas y golpes
+    ctx = LB; // capa pixelada de arriba: balón, estelas, chispas y golpes
     for (const f of top2) f();
     if (fx.trail.length > 1 && !b.hidden) { // estela en forma de cinta que se afila hacia atrás
       const pts = fx.trail.concat([{ x: b.x, y: b.y, t: 0 }]), n = pts.length;
@@ -3180,19 +3182,19 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.globalAlpha = 1; ctx.lineCap = 'butt';
     ctx = mainCtx; blit(lowB);
     for (const f of over) f();
-    for (const p of fx.pops) { ctx.globalAlpha = clamp((1 - p.t) * 2.5, 0, 1); text(p.text, p.x, p.y, `${p.size}px ${FP}`, p.col, INK, 5); }
+    for (const p of fx.pops) { ctx.globalAlpha = clamp((1 - p.t) * 2.5, 0, 1); text(p.text, p.x, p.y, `${p.size}px ${FD}`, p.col, INK, 5); }
     ctx.globalAlpha = 1;
     ctx.setTransform(S, 0, 0, S, 0, 0);
     drawHud(g);
     drawCutIn();
-    if (wantLock() && !locked() && performance.now() - lockAskT > 600) text('Haz clic en la pista para bloquear el ratón', 480, 162, `700 15px ${FP}`, PAPER, INK, 4);
+    if (wantLock() && !locked() && performance.now() - lockAskT > 600) text('Haz clic en la pista para bloquear el ratón', 480, 162, `700 15px ${FL}`, PAPER, INK, 4);
     if (scene === 'play' && net.sala && game.net) { // retardo de ida (aprox.) y por dónde va la conexión, para todos
       const rt = net.role === 'g' ? net.rtt : Math.max(0, ...net.sala.peers().filter(q => !q.sameTab && q.presence && typeof q.presence.lt === 'number').map(q => q.presence.lt / 1000));
       {
         const s = net.sala, rel = s.via && (s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0));
         const kind = !s.via ? 'sala de Claude' : !rel ? 'directa' : SRV && (net.role === 'h' || (s.link && s.link() === SRV)) ? 'servidor propio' : 'reserva' + (s.relays && s.relays() > 1 ? ' ×' + s.relays() : '');
         const fps = Math.round(fpsE), bad = rt > 0.4 || fps < 40; // fotogramas por segundo: si bajan, el problema es el dispositivo, no la red
-        text(kind + (rt > 0 ? ' · ' + Math.round(rt * 500) + ' ms' : '') + ' · ' + fps + ' fps' + (net.resync ? ' · resinc. ' + net.resync : ''), 480, 138, `700 13px ${FP}`, bad ? '#FFB1A6' : PAPER, INK, 4);
+        text(kind + (rt > 0 ? ' · ' + Math.round(rt * 500) + ' ms' : '') + ' · ' + fps + ' fps' + (net.resync ? ' · resinc. ' + net.resync : ''), 480, 138, `700 13px ${FL}`, bad ? '#FFB1A6' : PAPER, INK, 4);
       }
     }
     if (g.state === 'point' && g.lastPoint) {
@@ -3201,19 +3203,19 @@ if (typeof module !== 'undefined') module.exports = VB;
       const d = g.server.control;
       const hint = KB[d] ? keyName(KB[d].spike[0]) + ': saque potente · ' + keyName(KB[d].bump[0]) + ': saque seguro'
         : d.startsWith('pad') ? 'B saque potente · X saque seguro' : 'Rematar: saque potente · Recibir: saque seguro';
-      text((labels[g.server.i] || '') + ' al saque', 480, 196, `30px ${FP}`, TEAM[g.server.team].l, INK, 8);
-      text(hint, 480, 230, `700 19px ${FP}`, PAPER, INK, 5);
+      text((labels[g.server.i] || '') + ' al saque', 480, 196, `30px ${FD}`, TEAM[g.server.team].l, INK, 8);
+      text(hint, 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
     } else if (net.reconnect && g.state !== 'over') {
-      text('Reconectando…', 480, 196, `30px ${FP}`, PAPER, INK, 8);
-      text('Se ha cortado tu conexión. Vuelves a la misma sala en cuanto haya red.', 480, 230, `700 19px ${FP}`, PAPER, INK, 5);
+      text('Reconectando…', 480, 196, `30px ${FD}`, PAPER, INK, 8);
+      text('Se ha cortado tu conexión. Vuelves a la misma sala en cuanto haya red.', 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
     } else if (net.handover && g.state !== 'over') {
-      text('Cambiando de anfitrión…', 480, 196, `30px ${FP}`, PAPER, INK, 8);
-      text('Quien creó la sala se ha ido: ' + net.handover.succNick + ' toma el mando.', 480, 230, `700 19px ${FP}`, PAPER, INK, 5);
+      text('Cambiando de anfitrión…', 480, 196, `30px ${FD}`, PAPER, INK, 8);
+      text('Quien creó la sala se ha ido: ' + net.handover.succNick + ' toma el mando.', 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
     } else if (net.role === 'g' && net.stale > 2 && g.state !== 'over') {
-      text('Esperando al anfitrión…', 480, 196, `30px ${FP}`, PAPER, INK, 8);
-      text('Si no vuelve enseguida, otro jugador tomará el mando de la sala.', 480, 230, `700 19px ${FP}`, PAPER, INK, 5);
+      text('Esperando al anfitrión…', 480, 196, `30px ${FD}`, PAPER, INK, 8);
+      text('Si no vuelve enseguida, otro jugador tomará el mando de la sala.', 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
     } else if (g.state === 'over' && demo) {
-      text('Gana ' + TEAM[g.winner].name, 480, 160, `44px ${FP}`, TEAM[g.winner].l, INK, 9);
+      text('Gana ' + TEAM[g.winner].name, 480, 160, `44px ${FD}`, TEAM[g.winner].l, INK, 9);
     }
   }
   // Logo propio en pixel art: letras de 5x7 hechas a mano y un balón con estela (no usa ningún dibujo de fuera)
@@ -3268,8 +3270,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.translate(dir > 0 ? 190 : W - 190, y - hh / 2 - 8 + c.ch.h * 1.9); ctx.scale(1.9, 1.9); // la cabeza siempre dentro de la franja
     drawChar(ctx, { ch: c.ch, team: c.team, face: dir, run: 0, speed: 0, air: true, vy: 0, pose: 'spike', u: 0.45, k: 1, stun: false, kit: c.kit });
     ctx.restore();
-    text(c.ch.ab.name, W / 2 + dir * 70, y + 2, `700 34px ${FP}`, PAPER, INK, 7);
-    text(c.ch.name, W / 2 + dir * 70, y - 26, `700 15px ${FP}`, col, INK, 4);
+    text(c.ch.ab.name, W / 2 + dir * 70, y + 2, `700 34px ${FL}`, PAPER, INK, 7);
+    text(c.ch.name, W / 2 + dir * 70, y - 26, `700 15px ${FL}`, col, INK, 4);
     ctx.restore();
   }
   // Cartel de punto: una banda inclinada del color del equipo que entra deslizándose y sale por el otro lado
@@ -3288,9 +3290,9 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.fillStyle = sg; ctx.fillRect(sx - 90, y - bh, 180, bh * 2); ctx.globalCompositeOperation = 'source-over';
     const pz = t < 0.4 ? 1 + Math.sin(clamp((t - 0.15) / 0.25, 0, 1) * Math.PI) * 0.12 : 1;
     ctx.save(); ctx.translate(480, y - 6); ctx.rotate(-0.028); ctx.scale(pz, pz);
-    text('¡PUNTO ' + T.name.toUpperCase() + '!', 0, 0, `50px ${FP}`, PAPER, INK, 9);
+    text('¡PUNTO ' + T.name.toUpperCase() + '!', 0, 0, `50px ${FD}`, PAPER, INK, 9);
     ctx.restore();
-    text(g.lastPoint.reason, 480, y + 52, `22px ${FP}`, SUN, INK, 6);
+    text(g.lastPoint.reason, 480, y + 52, `22px ${FD}`, SUN, INK, 6);
     ctx.restore();
   }
   // Ambiente de cada pista: lo que se mueve en el escenario (nubes y mar, nieve, focos, pájaros, motas de luz)
@@ -3363,7 +3365,29 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (c.hat) { x.fillStyle = PAPER; x.beginPath(); x.arc(0, -31 * k, 2.2 * k, 0, 7); x.fill(); }
     return { cnv: crispen(cnv), w, h };
   }
+  function drawCrowdVec() {
+    if (crowdFor !== court) buildCrowd();
+    const y0 = CROWD_Y[court] || 294;
+    ctx.save(); ctx.globalAlpha = court === 'noche' ? 0.75 : 0.9;
+    for (const c of crowd) {
+      const cheer = crowdHype * (crowdSide === c.side ? 1 : 0.3), k = c.s;
+      const jump = cheer > 0.05 ? Math.abs(Math.sin(clock * 9 + c.ph)) * 7 * cheer : Math.sin(clock * 1.7 + c.ph) * 0.9;
+      const y = y0 - jump;
+      if (cheer > 0.25) {
+        ctx.strokeStyle = c.skin; ctx.lineWidth = 3 * k; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(c.x - 5 * k, y - 13 * k); ctx.lineTo(c.x - 10 * k, y - 29 * k); ctx.moveTo(c.x + 5 * k, y - 13 * k); ctx.lineTo(c.x + 10 * k, y - 29 * k); ctx.stroke();
+        if (c.flag) { ctx.fillStyle = TEAM[c.side].c; ctx.fillRect(c.x + 10 * k, y - 38 * k, 12 * k, 8 * k); }
+        if (c.phone) { ctx.fillStyle = '#FFF6B0'; ctx.fillRect(c.x - 12 * k, y - 34 * k, 3 * k, 5 * k); }
+      }
+      ctx.fillStyle = c.shirt; ctx.beginPath(); ctx.roundRect(c.x - 7 * k, y - 16 * k, 14 * k, 16 * k, [6 * k, 6 * k, 0, 0]); ctx.fill();
+      ctx.fillStyle = c.skin; ctx.beginPath(); ctx.arc(c.x, y - 22 * k, 6.5 * k, 0, 7); ctx.fill();
+      ctx.fillStyle = c.hat || c.hair; ctx.beginPath(); ctx.arc(c.x, y - 23.5 * k, 6.7 * k, Math.PI, 0); ctx.fill();
+      if (c.hat) { ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(c.x, y - 31 * k, 2.2 * k, 0, 7); ctx.fill(); }
+    }
+    ctx.restore();
+  }
   function drawCrowd() {
+    if (!PIXEL) { drawCrowdVec(); return; }
     if (crowdFor !== court) buildCrowd();
     const y0 = CROWD_Y[court] || 294;
     ctx.save(); ctx.globalAlpha = court === 'noche' ? 0.75 : 0.9; ctx.imageSmoothingEnabled = false;
@@ -4208,7 +4232,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 41; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 42; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
