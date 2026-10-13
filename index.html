@@ -75,6 +75,19 @@ button { cursor: pointer; }
   .pad-act { grid-template-columns: repeat(2, 78px); }
   .pad-act button { height: 62px; font-size: 14px; }
 }
+/* Móvil en vertical: botones grandes que llenan el hueco de abajo sin salirse de la pantalla */
+@media (orientation: portrait) {
+  #stage.touch { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  #stage.touch:not(.duo) #padL, #stage.touch:not(.duo) #padR { align-items: center; padding: 12px 8px 28px; }
+  #stage.touch:not(.duo) { --pb: min(96px, calc(25vw - 14px)); }
+  #stage.touch:not(.duo) .pad-move span { width: var(--pb); height: var(--pb); font-size: 30px; }
+  #stage.touch:not(.duo) .pad-act { grid-template-columns: repeat(2, var(--pb)); }
+  #stage.touch:not(.duo) .pad-act button { height: calc(var(--pb) * .8); font-size: clamp(10px, 3.3vw, 15px); letter-spacing: 0; }
+}
+/* En horizontal los botones son estrechos: letra más pequeña para que quepa «Habilidad» o «Colocar» */
+@media (orientation: landscape) {
+  .pad-act button, .pad-act button[data-k="ability"] { font-size: 10.5px; letter-spacing: 0; }
+}
 #stage.duo .pad-move span { width: 56px; height: 50px; }
 #stage.duo .pad-act { grid-template-columns: repeat(2, 58px); gap: 6px; }
 #stage.duo .pad-act button { height: 46px; font-size: 12px; }
@@ -181,7 +194,8 @@ table.st thead th { padding: 0 4px 8px; vertical-align: bottom; text-align: cent
 table.st thead th.t0 { --tc: var(--red); } table.st thead th.t1 { --tc: var(--blue); }
 table.st thead i { display: block; width: 12px; height: 12px; margin: 0 auto 4px; border-radius: 50%; background: var(--tc); }
 table.st thead b { display: block; font-family: var(--f-display); font-weight: 400; font-size: 16px; line-height: 1.1; color: var(--ink); overflow-wrap: anywhere; }
-table.st thead small { display: block; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+table.st thead small { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 480px) { table.st thead small { font-size: 10.5px; letter-spacing: -.02em; } table.st thead b { overflow-wrap: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } }
 table.st tbody th { text-align: left; padding: 6px 8px 6px 0; font-family: var(--f-label); font-weight: 700; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--paper-2); }
 table.st tbody td { text-align: center; padding: 6px 4px; color: var(--ink-2); border-bottom: 1px solid var(--paper-2); }
 table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--sun) 40%, transparent); }
@@ -293,6 +307,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .menu[data-d="3"] .pcard h3 small { display: none; }
 .menu[data-d="3"] .surv-go { padding-top: 4px; }
 .menu[data-d="3"] #pStats { display: none; }
+.p-look .field > .eyebrow { min-width: 10.5ch; } /* «Pista» y «Equipación» con los desplegables alineados */
 .look-sel { display: none; min-width: 0; flex: 1; font-family: var(--f-body); font-weight: 600; font-size: 15px; color: var(--ink); background: var(--paper-2); border: 2px solid var(--line); border-radius: 10px; padding: 5px 8px; }
 .menu[data-d="3"] .p-look .seg { display: none; }
 .menu[data-d="3"] .look-sel { display: block; }
@@ -428,7 +443,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
   .menu:not([data-d="0"]) .slot .abil { display: none; }
   .menu[data-d="2"] .slot, .menu[data-d="3"] .slot { grid-template-areas: "prev name next" "ctl ctl ctl"; padding: 6px; }
   .menu[data-d="2"] .slot .portrait, .menu[data-d="3"] .slot .portrait { display: none; }
-  .menu table.keys th:nth-child(4), .menu table.keys td:nth-child(4) { display: none; }
+  .menu table.keys th:nth-child(4), .menu table.keys td:nth-child(4), .menu table.keys td.pad-col { display: none; }
   .menu .go p { display: none; }
   .menu .lb-seats .seat-who { flex-basis: 90px; }
   .menu .seat .swap .l { display: none; }
@@ -464,7 +479,10 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
   .card .keycap { padding: 1px 8px; font-size: 13px; }
 }
 /* En móviles y tabletas el difuminado de fondo de los menús sale caro (se repinta con cada fotograma del partido de fondo) */
-@media (pointer: coarse) { .layer { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(21, 33, 63, .9); } }
+@media (pointer: coarse) { .layer { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(21, 33, 63, .9); }
+  .layer.title { background: radial-gradient(ellipse at 50% 38%, #1C2B52, #15213F 70%); } /* en el móvil la portada tapa del todo el menú */
+  .title-hint, .kb-only { display: none !important; } }
+.touch-only { display: none; } @media (pointer: coarse) { .touch-only { display: block; } .touch-only ul { margin: 0 0 12px; padding-left: 18px; } }
 </style>
 </head>
 <body>
@@ -591,7 +609,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <div class="topic">
           <ul>
             <li>Quien crea la sala recibe un código de 4 letras y se lo pasa a sus amigos.</li>
-            <li id="olStep">Ellos abren este mismo juego con su sesión de Claude, escriben el código y pulsan Unirse.</li>
+            <li id="olStep">Ellos abren este mismo juego, escriben el código y pulsan Unirse.</li>
             <li>Cada uno elige personaje y equipo en la sala. Los huecos libres los juegan bots.</li>
             <li>El anfitrión lleva los bots y el marcador. Si se va, otro jugador toma el mando y el partido sigue.</li>
             <li>Si no os encontráis, recargad todos la página: tenéis que ver la misma versión (<span id="olVer"></span>).</li>
@@ -600,6 +618,15 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
       </div>
 
       <div class="panel" id="tab-keys" role="tabpanel" hidden>
+        <div class="touch-only">
+          <ul>
+            <li>Con el móvil se juega con los botones de la pantalla: las <strong>flechas</strong> mueven a tu jugador.</li>
+            <li><strong>Recibir</strong> para los balones bajos, <strong>Colocar</strong> para dejarlo arriba a tu compañero y <strong>Rematar</strong> para atacar (en el suelo es el saque).</li>
+            <li><strong>Saltar</strong> y luego <strong>Rematar</strong> en el aire es un remate en salto. <strong>Plancha</strong> te lanza a por balones lejanos.</li>
+            <li><strong>Habilidad</strong> se ilumina en amarillo cuando está lista.</li>
+            <li>Con un teclado o un mando conectados también puedes jugar: estas son sus teclas.</li>
+          </ul>
+        </div>
         <div class="keys-box" data-keys></div>
       </div>
 
@@ -616,7 +643,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
             <li><strong>4 toques</strong> o <strong>3 toques</strong> por equipo, según las reglas elegidas. En 2 contra 2 nadie puede tocar dos veces seguidas.</li>
             <li><strong>Faltas en el saque</strong>, con punto para el rival: que el equipo que saca toque el balón antes de que cruce la red, o que quien recibe lo remate al primer toque.</li>
             <li>La habilidad de tu personaje se recarga mientras el balón está en juego.</li>
-            <li>Durante el partido el ratón queda dentro del juego. <strong>Escape</strong> lo suelta y pone la pausa.</li>
+            <li class="kb-only">Durante el partido el ratón queda dentro del juego. <strong>Escape</strong> lo suelta y pone la pausa.</li>
             <li>El <strong>Tutorial</strong> te enseña cada golpe paso a paso.</li>
             <li>En <strong>Progreso</strong> subes de nivel, cumples retos diarios y juegas la Copa: si pierdes una ronda, empieza de nuevo.</li>
             <li>Dibujos de los jugadores: «Beach Volley Asset» de <strong>Eidern</strong> (eidern.itch.io).</li>
@@ -656,7 +683,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
       <header class="masthead">
         <div>
           <h1>Sala <em id="lbCode">ABCD</em></h1>
-          <p class="tip" id="lbTip">Pasa este código a tus amigos: abren este juego con su sesión de Claude, lo escriben en Online y pulsan Unirse.</p>
+          <p class="tip" id="lbTip">Pasa este código a tus amigos: abren este mismo juego, lo escriben en Online y pulsan Unirse.</p>
         </div>
       </header>
       <div class="rules" id="lbRules">
@@ -691,7 +718,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <button type="button" class="btn ghost" id="btnRestart">Reiniciar</button>
         <button type="button" class="btn ghost" id="btnQuit">Menú</button>
       </div>
-      <div class="keys-box" data-keys></div>
+      <div class="keys-box kb-only" data-keys></div>
     </div>
   </section>
 
@@ -792,7 +819,7 @@ const VB = (() => {
       env: { slowTeam: -1, slowT: 0, wallTeam: -1, wallT: 0 },
       state: 'serve', stateT: 0, touches: 0, lastHitter: null, lastTeam: -1, lastHitTime: -9, hitSeq: 0,
       events: [], serveTeam: cfg.firstServe || 0, serveRot: [0, 0], server: null, pred: null,
-      desig: [null, null], rallyHits: 0, lastKind: '', lastPoint: null, winner: -1,
+      desig: [null, null], atkD: [245, 245], atkSeq: -1, rallyHits: 0, lastKind: '', lastPoint: null, winner: -1,
     };
     const count = [0, 0];
     cfg.slots.forEach((s, i) => {
@@ -1199,7 +1226,15 @@ const VB = (() => {
     const mates = g.players.filter(q => q.team === p.team), mate = mates.find(q => q !== p) || null;
     const opps = g.players.filter(q => q.team !== p.team);
     const S = styleOf(p);
-    const home = () => NETX - d * ((mates.length === 1 ? 255 : (p.idx === 0 ? 160 : 335)) + (S.home || 0) * (mates.length === 1 ? 1 : 0.6));
+    const base = () => (mates.length === 1 ? 255 : (p.idx === 0 ? 160 : 335)) + (S.home || 0) * (mates.length === 1 ? 1 : 0.6);
+    const home = () => { // si el rival prepara el ataque, defensa: hacia donde suelen caer sus remates (más cuanto mejor es el bot)
+      let k = base();
+      if (g.state === 'rally' && g.lastTeam !== p.team && g.lastTeam >= 0 && g.touches >= 1 && sideOf(b.x) !== p.team) {
+        const a = clamp(g.atkD[p.team], 120, 380), want = mates.length === 1 ? a : a + (p.idx === 0 ? -60 : 60);
+        k += (want - k) * D.smart;
+      }
+      return NETX - d * k;
+    };
     const go = x => { const dx = x - p.x; inp.x = Math.abs(dx) < 3 ? 0 : clamp(dx / 10, -1, 1) * D.speed; B.goalX = x; };
     const press = (btn, c) => { inp[btn] = true; inp.aim = d * c.ax; inp.down = !!c.down && !p.onGround; };
     if (g.state === 'over') return;
@@ -1346,6 +1381,11 @@ const VB = (() => {
     g.time += dt; g.tick++;
     const ref = !g.net || g.net.host; // quien lleva el marcador
     if (g.landed) g.pred = null; else if (g.state === 'rally' && (g.tick & 1) === 0) g.pred = predict(g);
+    // Dónde suelen caer los remates de cada rival: los bots defensores se colocan ahí antes del golpe
+    if (g.pred && g.lastKind === 'spike' && g.atkSeq !== g.hitSeq && g.lastTeam >= 0) {
+      const L = g.pred.land, t = 1 - g.lastTeam;
+      if (L.floor && L.side === t) { g.atkSeq = g.hitSeq; g.atkD[t] = g.atkD[t] * 0.7 + Math.abs(L.x - NETX) * 0.3; }
+    }
     for (const p of g.players) {
       if (p.remote) { if (g.state === 'rally') p.cd = Math.max(0, p.cd - dt); puppet(g, p, dt); continue; }
       if (p.isBot) botThink(g, p, dt);
@@ -2532,6 +2572,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     const L = g.pred && g.pred.land, side = L ? L.side : VB.sideOf(g.ball.x), tx = L ? L.x : g.ball.x;
     const mates = g.players.filter(q => q.team === side);
     if (mates.length < 2) return null;
+    const dz = g.desig && g.desig[side]; // si los bots ya han decidido quién va, el aviso dice lo mismo
+    if (dz && dz.seq === g.hitSeq && mates.includes(dz.p) && !(g.noRepeat && g.lastHitter === dz.p && g.lastTeam === side)) return dz.p;
     let pool = mates;
     if (g.lastTeam === side && g.lastHitter && g.lastHitter.team === side) { pool = mates.filter(q => q !== g.lastHitter); if (g.touches >= g.maxTouches) return null; }
     return pool.reduce((a, q) => (Math.abs(q.x - tx) < Math.abs(a.x - tx) ? q : a), pool[0]);
@@ -2729,12 +2771,15 @@ if (typeof module !== 'undefined') module.exports = VB;
   function drawChips(g) {
     const rows = [0, 0];
     g.players.forEach((p, i) => {
-      const t = p.team, y = 12 + rows[t]++ * 30, x = t === 0 ? 12 : W - 12 - 176;
-      rrect(x, y, 176, 25, 8, 'rgba(21,33,63,.82)');
-      ctx.fillStyle = TEAM[t].c; ctx.beginPath(); ctx.arc(x + 13, y + 12.5, 6, 0, 7); ctx.fill();
+      const t = p.team, y = 12 + rows[t]++ * 30;
       const lab = labels[i] && labels[i].length > 4 ? labels[i] : (labels[i] ? labels[i] + ' · ' : '') + charName(p);
+      // el nombre manda: la placa crece y la barra de habilidad va siempre detrás del texto
+      ctx.font = `700 15px ${FL}`; const tw = Math.min(ctx.measureText(lab).width, 190), bw = 46, pw = Math.max(150, 25 + tw + 10 + bw + 10);
+      const x = t === 0 ? 12 : W - 12 - pw;
+      rrect(x, y, pw, 25, 8, 'rgba(21,33,63,.82)');
+      ctx.fillStyle = TEAM[t].c; ctx.beginPath(); ctx.arc(x + 13, y + 12.5, 6, 0, 7); ctx.fill();
       text(lab, x + 25, y + 13.5, `700 15px ${FL}`, PAPER, null, 0, 'left');
-      const k = 1 - clamp(p.cd / p.ch.ab.cd, 0, 1), bx = x + 112, bw = 56;
+      const k = 1 - clamp(p.cd / p.ch.ab.cd, 0, 1), bx = x + pw - 10 - bw;
       rrect(bx, y + 8, bw, 9, 4.5, '#3A4A78');
       if (k > 0.02) rrect(bx, y + 8, bw * k, 9, 4.5, k >= 1 ? SUN : '#8FA3D6');
     });
@@ -3082,7 +3127,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         tbody.append(tr);
       }
       const pr = el('tr'), pk = el('td', GAME_KEYS.has('KeyP') ? 'Esc' : 'Esc o P'); pk.colSpan = 2;
-      pr.append(el('td', 'Pausa'), pk, el('td', 'Start')); tbody.append(pr);
+      const ps = el('td', 'Start'); ps.className = 'pad-col'; pr.append(el('td', 'Pausa'), pk, ps); tbody.append(pr);
       table.append(thead, tbody);
       const note = el('p', keyMsg || (cap ? 'Pulsa la tecla o el botón del ratón que quieras usar. Esc cancela.' : 'Pulsa una casilla para cambiarla. Valen teclas y botones del ratón.'));
       note.setAttribute('aria-live', 'polite');
@@ -3552,7 +3597,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 37; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 38; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
