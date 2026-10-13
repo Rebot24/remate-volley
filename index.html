@@ -2707,6 +2707,9 @@ if (typeof module !== 'undefined') module.exports = VB;
         : d.startsWith('pad') ? 'B saque potente · X saque seguro' : 'Rematar: saque potente · Recibir: saque seguro';
       text((labels[g.server.i] || '') + ' al saque', 480, 196, `30px ${FD}`, TEAM[g.server.team].l, INK, 8);
       text(hint, 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
+    } else if (net.reconnect && g.state !== 'over') {
+      text('Reconectando…', 480, 196, `30px ${FD}`, PAPER, INK, 8);
+      text('Se ha cortado tu conexión. Vuelves a la misma sala en cuanto haya red.', 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
     } else if (net.handover && g.state !== 'over') {
       text('Cambiando de anfitrión…', 480, 196, `30px ${FD}`, PAPER, INK, 8);
       text('Quien creó la sala se ha ido: ' + net.handover.succNick + ' toma el mando.', 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
@@ -3139,9 +3142,11 @@ if (typeof module !== 'undefined') module.exports = VB;
       };
       const merge = (k, patch) => store.set(k, Object.freeze(Object.assign({}, store.get(k) || {}, patch)));
       const shut = () => { closed = true; clearInterval(beat); links.forEach(l => l.close()); try { if (peer) peer.destroy(); } catch (e) { /* */ } };
+      const reach = () => (typeof navigator === 'undefined' || navigator.onLine !== false) && (links.some(l => l.ok) || !!(hostConn && hostConn.open));
+      let lastAlive = true;
       const fail = code => {
         if (!done) { done = true; shut(); reject(Object.assign(new Error(code), { code })); }
-        else if (!closed) { shut(); errs.forEach(f => { try { f({ code }); } catch (e) { /* */ } }); }
+        else if (!closed) { lastAlive = reach(); shut(); errs.forEach(f => { try { f({ code }); } catch (e) { /* */ } }); }
       };
       const ready = () => { if (!done) { done = true; resolve(room); } };
       // Anfitrión: a los invitados directos, uno a uno; a los de reserva, una vez por servidor (lo oyen todos los suyos)
@@ -3160,6 +3165,8 @@ if (typeof module !== 'undefined') module.exports = VB;
         onPeers: (f, onErr) => { cbs.push(f); if (onErr) errs.push(onErr); return () => { cbs = cbs.filter(x => x !== f); errs = errs.filter(x => x !== onErr); }; },
         leave: async () => { if (closed) return; if (!host && via === 'relay' && pick) up({ t: 'bye', from: me }); shut(); },
         relays: () => (host ? links.filter(busy).length : [pick, twin].filter(l => l && l.ok).length),
+        // ¿llego a algo? Si no llego a ningún servidor ni al anfitrión, el que se ha quedado sin red soy yo (no es que el anfitrión se haya ido)
+        alive: () => (closed ? lastAlive : reach()),
         dbg: () => links.map(l => ({ url: l.url.slice(-5), ok: l.ok, heard: Math.round(now() - l.heard), pick: l === pick, twin: l === twin, busy: host ? busy(l) : undefined })),
       };
       const drop = k => { // un invitado se ha ido (o lleva demasiado sin dar señales)
@@ -3275,14 +3282,12 @@ if (typeof module !== 'undefined') module.exports = VB;
         directT = now();
         const hc = peer.connect(hostId, { reliable: true, serialization: 'json' });
         hostConn = hc;
-        hc.on('open', () => { if (hostConn !== hc || via === 'direct') return; hc.send({ t: 'p', from: me, p: mine, q: ++seqOut }); });
+        hc.on('open', () => { if (hostConn !== hc || via === 'direct') return; hc.send({ t: 'p', from: me, p: mine }); }); // sin número: no estorba a la reserva
         hc.on('data', m => {
           if (hostConn !== hc || closed) return;
           if (!m || typeof m !== 'object') return;
-          if (m.t === 'hello' && via !== 'direct') {
-            const upgraded = via === 'relay'; via = 'direct';
-            if (!upgraded) links.forEach(l => l.close()); // entré directo: la reserva sobra (si subí desde reserva, la guardo de respaldo)
-          }
+          if (m.t === 'hello' && !via) { via = 'direct'; links.forEach(l => l.close()); } // entré directo: la reserva sobra
+          else if (m.t === 'up' && via === 'relay') { via = 'direct'; seen.set('h', now()); return; } // el anfitrión confirma la directa (la reserva queda de respaldo)
           if (via !== 'direct') return;
           seen.set('h', now());
           fromHost(m);
@@ -3307,13 +3312,16 @@ if (typeof module !== 'undefined') module.exports = VB;
       }, 3000);
       if (host) peer.on('connection', c => {
         const k = c.peer;
-        const gone = () => { if (conns.get(k) === c) drop(k); };
+        const gone = () => { const cur = conns.get(k); if (cur === c) drop(k); else if (cur && cur.upgrade === c) cur.upgrade = null; };
         c.on('open', () => {
           const old = conns.get(k);
           if (old && !old.relays) { try { c.close(); } catch (e) { /* */ } return; } // ya tiene una directa
-          conns.set(k, c); seen.set(k, now()); c.send(hello(k)); // nueva, o mejora desde la reserva: a partir de ahora va por aquí
+          if (old && old.relays) { old.upgrade = c; c.send(hello(k)); return; } // va por reserva: la directa queda a prueba hasta que llegue algo por ella
+          conns.set(k, c); seen.set(k, now()); c.send(hello(k));
         });
         c.on('data', m => {
+          const cur = conns.get(k);
+          if (cur && cur.upgrade === c) { conns.set(k, c); try { c.send({ t: 'up' }); } catch (e) { /* */ } } // funciona en los dos sentidos: ahora sí, por la directa
           if (conns.get(k) !== c) return;
           seen.set(k, now());
           if (!m || m.t !== 'p' || !m.p || typeof m.p !== 'object') return;
@@ -3354,7 +3362,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 29; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 30; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -3420,7 +3428,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   function netLeave(msg) {
     const sala = net.sala;
     if (net.unsub) { try { net.unsub(); } catch (e) { /* */ } }
-    Object.assign(net, { sala: null, unsub: null, role: '', phase: '', code: '', view: null, handover: null, court: '' });
+    Object.assign(net, { sala: null, unsub: null, role: '', phase: '', code: '', view: null, handover: null, reconnect: null, court: '' });
     bgTicker(false);
     if (sala) sala.leave().catch(() => {});
     $('#lobby').hidden = true;
@@ -3437,7 +3445,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     });
   }
   function netStartCommon() {
-    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0 });
+    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0, lost: {} });
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
     $('#lobby').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
     buildPads(); audioInit(); resize(); lockMouse();
@@ -3471,7 +3479,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (!id) continue;
       if (!act.includes(k)) { net.seatPeer[k] = null; continue; }
       if (here.has(id)) net.gone[id] = 0;
-      else if ((net.gone[id] = (net.gone[id] || 0) + dt) > 5) net.seatPeer[k] = null; // margen para reconexiones breves
+      else if ((net.gone[id] = (net.gone[id] || 0) + dt) > (scene === 'play' ? 12 : 5)) net.seatPeer[k] = null; // margen para reconexiones breves
     }
     for (const p of peers) { // peticiones de cambio de sitio: cada una se atiende una sola vez, y solo en la sala
       if (p.sameTab || !p.presence || p.presence.role !== 'g') continue;
@@ -3487,8 +3495,14 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (k != null) net.seatPeer[k] = p.peer;
     }
     if (scene === 'play') net.playSeats.forEach((id, i) => { // quien se va deja su jugador a un bot
-      if (id && i !== net.hostIdx && !net.seatPeer.includes(id)) { const p = game.players[i]; p.remote = false; p.isBot = true; p.control = 'bot'; labels[i] = 'BOT'; net.playSeats[i] = ''; net.ctrl[i] = ''; }
+      if (id && i !== net.hostIdx && !net.seatPeer.includes(id)) { const p = game.players[i]; p.remote = false; p.isBot = true; p.control = 'bot'; labels[i] = 'BOT'; net.playSeats[i] = ''; net.ctrl[i] = ''; (net.lost || (net.lost = {}))[i] = id; }
     });
+    if (scene === 'play' && net.lost) for (const i in net.lost) { // y si vuelve a la sala, recupera su jugador
+      const id = net.lost[i], pe = peers.find(q => q.peer === id && !q.sameTab && q.presence && q.presence.role === 'g'), k = act[i];
+      if (!pe || k == null || (net.seatPeer[k] && net.seatPeer[k] !== id) || !game.players[i]) continue;
+      net.seatPeer[k] = id; net.gone[id] = 0; net.playSeats[i] = id; net.ctrl[i] = id; delete net.lost[i];
+      const p = game.players[i]; p.isBot = false; p.remote = true; p.control = 'net:' + id; labels[i] = cleanNick(pe.presence.nick) || 'Invitado';
+    }
     // Durante el partido esto basta 4 veces por segundo; y la pantalla de la sala (oculta) solo se rehace si cambia algo que se vea
     if (scene === 'play' && (net.hT = (net.hT || 0) - dt) > 0) return;
     net.hT = 0.25;
@@ -3592,6 +3606,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   /* --- Invitado --- */
   function guestTick(dt) {
     const hp = hostPeer();
+    if (net.reconnect) { net.reconnect.t += dt; return; }
     if (net.handover) { handoverTick(dt, hp); return; }
     if (!hp) { net.lost += dt; if (net.lost > 4) startHandover(); return; }
     net.lost = 0;
@@ -3678,8 +3693,9 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (net.role === 'g' && net.direct && net.view && Array.isArray(net.view.seats)) startHandover(); // en la web se pierde la sala entera con el anfitrión
     else if (!net.handover) netLeave('Se perdió la conexión con la sala.');
   }
-  function startHandover() {
-    if (net.handover || !net.sala) return;
+  function startHandover(force) {
+    if (net.handover || net.reconnect || !net.sala) return;
+    if (force !== true && net.direct && net.role === 'g' && !(net.sala.alive && net.sala.alive())) { startReconnect(); return; }
     const v = net.view, seats = v && Array.isArray(v.seats) ? v.seats : null, me = myPeer();
     const here = net.direct ? null : new Set(net.sala.peers().map(p => p.peer)); // en la sala de Claude se ve quién sigue
     const cands = (seats || []).filter(s => s && s.peer && !s.host && (!here || here.has(s.peer)));
@@ -3687,6 +3703,27 @@ if (typeof module !== 'undefined') module.exports = VB;
     const oldHost = seats.find(s => s && s.host);
     net.handover = { t: 0, succ: cands[0].peer, succNick: cleanNick(cands[0].nick) || 'otro jugador', gen: Math.max(v.gen || 1, net.gen) + 1, me, oldNick: oldHost ? cleanNick(oldHost.nick) : '' };
     if (cands[0].peer === me) becomeHost(); else if (net.direct) rejoinAsGuest();
+  }
+  // Me he quedado sin red (o se cortó mi conexión): vuelvo a entrar en la misma sala con el mismo nombre, y el anfitrión me devuelve mi jugador
+  function startReconnect() {
+    const me = myPeer(), name = net.sala && net.sala.name;
+    if (!me || !name || !net.direct) { startHandover(true); return; }
+    const r = net.reconnect = { t: 0, me, name };
+    (async () => {
+      await wait(800);
+      while (net.reconnect === r && r.t < 45) {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) { await wait(1000); continue; }
+        try {
+          const sala = await p2pApi.join(r.name, 'g', r.me);
+          if (net.reconnect !== r) { sala.leave().catch(() => {}); return; }
+          net.reconnect = null; Object.assign(net, { lost: 0, hbSeen: null, hbIdle: 0, stale: 0 });
+          swapSala(sala, 'g');
+          if (scene === 'play') pop(480, 150, '¡Reconectado!', SUN, 24);
+          return;
+        } catch (e) { await wait(1500); }
+      }
+      if (net.reconnect === r) { net.reconnect = null; startHandover(true); } // no hay manera: lo de siempre (relevo o salir)
+    })();
   }
   function swapSala(sala, role) {
     const old = net.sala;
@@ -4217,7 +4254,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (!demo) readInputs();
       let sdt = dt;
       if (freeze > 0 && !net.sala) { freeze -= dt; sdt = 0; } // pausa de impacto
-      if (net.handover) sdt = 0; // mientras se cambia de anfitrión, el partido espera
+      if (net.handover || net.reconnect) sdt = 0; // mientras se cambia de anfitrión o me reconecto, el partido espera
       VB.update(game, sdt);
       if (online) {
         const b = game.ball;
