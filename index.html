@@ -1577,7 +1577,7 @@ const VB = (() => {
   function netOut(g, by, kind, n, x) {
     const b = g.ball, id = g.net.pid + (++g.net.seq);
     b.x = r1(b.x); b.y = r1(b.y); b.vx = r1(b.vx); b.vy = r1(b.vy);
-    g.net.out.push({ id, on: g.bid, r: g.rally, by, kind, n, x: x || 0, b: [b.x, b.y, b.vx, b.vy, b.fire ? 1 : 0, b.curve] });
+    g.net.out.push({ id, on: g.bid, r: g.rally, by, kind, n, x: x || 0, b: [b.x, b.y, b.vx, b.vy, b.fire ? 1 : 0, b.curve], gt: g.time });
     g.bid = id; g.chain.push(id); if (g.chain.length > 60) g.chain.shift();
     g.landed = null;
   }
@@ -1654,11 +1654,11 @@ const VB = (() => {
       p.dive ? r2(p.dive.t) : 0, p.dive ? p.dive.dir : 0, (p.buff.fire > 0 ? 1 : 0) | (p.buff.curve > 0 ? 2 : 0) | (p.buff.perfect > 0 ? 4 : 0),
       r1(Math.min(9, g.time - p.anim.swingT)), Math.max(0, SWINGS.indexOf(p.anim.swingType))];
   }
-  function netSetPl(g, i, a) {
+  function netSetPl(g, i, a, exact) {
     const p = g.players[i];
     if (!p || !Array.isArray(a)) return;
     const fl = num(a[4]) | 0, nx = clamp(num(a[0], p.x), XMIN, XMAX), ny = clamp(num(a[1], GROUND), 0, GROUND);
-    const k = Math.abs(nx - p.x) < 80 && Math.abs(ny - p.y) < 90 ? 0.45 : 0; // las correcciones pequeñas se suavizan
+    const k = !exact && Math.abs(nx - p.x) < 80 && Math.abs(ny - p.y) < 90 ? 0.45 : 0; // las correcciones pequeñas se suavizan
     p.onGround = !!(fl & 1); p.x = nx + (p.x - nx) * k; p.y = p.onGround ? GROUND : Math.min(GROUND, ny + (p.y - ny) * k);
     p.vx = clamp(num(a[2]), -2000, 2000); p.vy = p.onGround ? 0 : clamp(num(a[3]), -3000, 3000);
     p.face = a[5] === -1 ? -1 : 1; p.cd = clamp(num(a[6]), 0, 60); p.stun = clamp(num(a[7]), 0, 5); p.rec = clamp(num(a[8]), 0, 5);
@@ -3224,7 +3224,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     drawCutIn();
     if (wantLock() && !locked() && performance.now() - lockAskT > 600) text('Haz clic en la pista para bloquear el ratón', 480, 162, `700 15px ${FL}`, PAPER, INK, 4);
     if (scene === 'play' && net.sala && game.net) { // retardo de ida (aprox.) y por dónde va la conexión, para todos
-      const rt = net.role === 'g' ? net.rtt : Math.max(0, ...net.sala.peers().filter(q => !q.sameTab && q.presence && typeof q.presence.lt === 'number').map(q => q.presence.lt / 1000));
+      const rt = net.role === 'g' ? net.rtt : Math.max(0, ...Object.values(sync.rt));
       {
         const s = net.sala, rel = s.via && (s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0));
         const kind = !s.via ? 'sala de Claude' : !rel ? 'directa' : SRV && (net.role === 'h' || (s.link && s.link() === SRV)) ? 'servidor propio' : 'reserva' + (s.relays && s.relays() > 1 ? ' ×' + s.relays() : '');
@@ -4280,11 +4280,41 @@ if (typeof module !== 'undefined') module.exports = VB;
         conns.forEach((c, k) => { if (!c.relays && k !== exPeer && c.open) c.send(msg); });
         links.forEach(l => { if (!(exLinks && exLinks.has(l)) && l.ok && busy(l)) l.pub(msg); });
       };
+      // Partido: canal aparte, rápido y sin reenvíos (si un paquete se pierde, el siguiente ya trae el estado entero).
+      // Por la directa va por un canal WebRTC no fiable y sin orden; si no lo hay, por el fiable; por la reserva, por MQTT.
+      const sCbs = [];
+      const sIn = (d, from) => { if (!d || typeof d !== 'object' || typeof from !== 'string') return; const at = now(); for (const f of sCbs) { try { f(d, from, at); } catch (e) { /* */ } } };
+      const fastOf = (pc, onMsg) => {
+        try {
+          const ch = pc.createDataChannel('rv-st', { negotiated: true, id: 500, ordered: false, maxRetransmits: 0 });
+          ch.onmessage = e => { let m = null; try { m = JSON.parse(e.data); } catch (er) { return; } if (m && typeof m === 'object') { if (window.__rvRx) window.__rvRx(me, m, 'fast'); onMsg(m); } };
+          return ch;
+        } catch (e) { return null; }
+      };
+      const sendTo = (c, msg, str) => {
+        if (c.fast && c.fast.readyState === 'open') { try { c.fast.send(str); return; } catch (e) { /* */ } }
+        if (c.open) { try { c.send(msg); } catch (e) { /* */ } }
+      };
+      const fanS = (msg, exPeer, exLinks) => {
+        const str = JSON.stringify(msg);
+        conns.forEach((c, k) => { if (!c.relays && k !== exPeer) sendTo(c, msg, str); });
+        links.forEach(l => { if (!(exLinks && exLinks.has(l)) && l.ok && busy(l)) l.pub(msg); });
+      };
       const room = {
+        stream: d => {
+          const msg = { t: 's', from: me, d };
+          if (window.__rvTx) window.__rvTx(me, msg);
+          if (host) fanS(msg);
+          else if (via === 'direct' && hostConn) sendTo(hostConn, msg, JSON.stringify(msg));
+          else if (via === 'relay') up(msg);
+        },
+        onStream: f => { sCbs.push(f); return () => { const i = sCbs.indexOf(f); if (i >= 0) sCbs.splice(i, 1); }; },
+        fast: () => (host ? [...conns.values()].filter(c => c.fast && c.fast.readyState === 'open').length : hostConn && hostConn.fast && hostConn.fast.readyState === 'open' ? 1 : 0),
         name, peers: () => snap, via: () => via, link: () => (pick ? pick.url : ''), slow: () => (host ? links.some(busy) : via === 'relay'),
         presence: async patch => {
           mine = Object.freeze(Object.assign({}, mine, patch)); rebuild();
           const msg = { t: 'p', from: me, p: patch, q: ++seqOut };
+          if (window.__rvTx) window.__rvTx(me, msg);
           if (host) fan(msg); else if (via === 'relay') up(msg); else if (hostConn && hostConn.open) hostConn.send(msg);
         },
         onPeers: (f, onErr) => { cbs.push(f); if (onErr) errs.push(onErr); return () => { cbs = cbs.filter(x => x !== f); errs = errs.filter(x => x !== onErr); }; },
@@ -4311,6 +4341,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       };
       const onBus = (l, m) => {
         if (closed) return;
+        if (window.__rvRx) window.__rvRx(me, m, 'mqtt');
         if (host) {
           if (m.t === 'b') { // otra sala con este código: antes de abrir, choca; ya abierta, si es de un relevo posterior, me han sustituido
             const mg = m.gen || 1;
@@ -4328,12 +4359,14 @@ if (typeof module !== 'undefined') module.exports = VB;
             seen.set(k, now()); if (nu || m.re) l.pub(hello(k));
           } else if (c && c.relays) {
             c.relays.add(l); seen.set(k, now());
-            if (m.t === 'p' && m.p && typeof m.p === 'object') { if (fresh(m)) { merge(k, m.p); rebuild(); fan({ t: 'p', from: k, p: m.p, q: m.q }, k, c.relays); } }
+            if (m.t === 's') { sIn(m.d, k); fanS({ t: 's', from: k, d: m.d }, k, c.relays); }
+            else if (m.t === 'p' && m.p && typeof m.p === 'object') { if (fresh(m)) { merge(k, m.p); rebuild(); fan({ t: 'p', from: k, p: m.p, q: m.q }, k, c.relays); } }
             else if (m.t === 'bye') drop(k);
           }
           return;
         }
         if (m.t === 'b') { const mg = m.gen || 1; if (mg < topGen) return; topGen = mg; l.heard = now(); if (l === pick || l === twin) seen.set('h', l.heard); return; }
+        if (m.t === 's') { if ((l === pick || l === twin) && m.from !== me) { if (via === 'relay') l.heard = now(); sIn(m.d, m.from); } return; }
         if (via !== 'relay' || (l !== pick && l !== twin) || (m.to && m.to !== me) || m.t === 'j' || m.t === 'k') return;
         if (m.t === 'hello' && (m.gen || 1) < topGen) return; // de un anfitrión ya sustituido
         fromHost(m);
@@ -4407,12 +4440,17 @@ if (typeof module !== 'undefined') module.exports = VB;
         directT = now();
         const hc = peer.connect(hostId, { reliable: true, serialization: 'json' });
         hostConn = hc;
-        hc.on('open', () => { if (hostConn !== hc || via === 'direct') return; hc.send({ t: 'p', from: me, p: mine }); }); // sin número: no estorba a la reserva
+        hc.on('open', () => {
+          hc.fast = fastOf(hc.peerConnection, m => { if (hostConn !== hc || closed) return; if (via === 'direct') seen.set('h', now()); if (m.t === 's') sIn(m.d, m.from); });
+          if (hostConn !== hc || via === 'direct') return; hc.send({ t: 'p', from: me, p: mine }); // sin número: no estorba a la reserva
+        });
         hc.on('data', m => {
           if (hostConn !== hc || closed) return;
           if (!m || typeof m !== 'object') return;
+          if (window.__rvRx) window.__rvRx(me, m, 'dc');
           if (m.t === 'hello' && !via) { via = 'direct'; links.forEach(l => l.close()); } // entré directo: la reserva sobra
           else if (m.t === 'up' && via === 'relay') { via = 'direct'; seen.set('h', now()); return; } // el anfitrión confirma la directa (la reserva queda de respaldo)
+          if (m.t === 's') { sIn(m.d, m.from); return; }
           if (via !== 'direct') return;
           seen.set('h', now());
           fromHost(m);
@@ -4439,16 +4477,19 @@ if (typeof module !== 'undefined') module.exports = VB;
         const k = c.peer;
         const gone = () => { const cur = conns.get(k); if (cur === c) drop(k); else if (cur && cur.upgrade === c) cur.upgrade = null; };
         c.on('open', () => {
+          c.fast = fastOf(c.peerConnection, m => { if (conns.get(k) !== c || closed) return; seen.set(k, now()); if (m.t === 's') { sIn(m.d, k); fanS({ t: 's', from: k, d: m.d }, k, null); } });
           const old = conns.get(k);
           if (old && !old.relays) { try { c.close(); } catch (e) { /* */ } return; } // ya tiene una directa
           if (old && old.relays) { old.upgrade = c; c.send(hello(k)); return; } // va por reserva: la directa queda a prueba hasta que llegue algo por ella
           conns.set(k, c); seen.set(k, now()); c.send(hello(k));
         });
         c.on('data', m => {
+          if (window.__rvRx && m) window.__rvRx(me, m, 'dc');
           const cur = conns.get(k);
           if (cur && cur.upgrade === c) { conns.set(k, c); try { c.send({ t: 'up' }); } catch (e) { /* */ } } // funciona en los dos sentidos: ahora sí, por la directa
           if (conns.get(k) !== c) return;
           seen.set(k, now());
+          if (m && m.t === 's') { sIn(m.d, k); fanS({ t: 's', from: k, d: m.d }, k, null); return; }
           if (!m || m.t !== 'p' || !m.p || typeof m.p !== 'object') return;
           merge(k, m.p); rebuild();
           fan({ t: 'p', from: k, p: m.p }, k, null);
@@ -4487,7 +4528,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 47; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 48; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4543,8 +4584,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     Object.assign(net, { sala, code, role, phase: 'lobby', mid: 0, sent: '', view: null, gone: {}, seatPeer: [null, null, null, null], playSeats: [], ctrl: [],
       props: [], abs: [], head: null, seenAb: {}, seenPl: {}, myIdx: -1, myChar: cfg.slots[0].char, rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null,
       hostSeat: 0, hostIdx: 0, seenMv: {}, mvSeq: 0, base: 'rv-' + code, gen: 1, hb: 0, hbT: 0, hbSeen: null, hbIdle: 0, court: role === 'h' ? prof.court : '', handover: null });
-    net.unsub = sala.onPeers(() => {}, roomError);
-    sala.presence({ v: 2, role, gen: 1, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
+    net.unsub = sala.onPeers(() => {}, roomError); hookStream(sala);
+    sala.presence({ v: 2, ver: VERSION, role, gen: 1, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
     bgTicker(document.hidden);
     endTut(); scene = 'lobby'; paused = false;
     $('#menu').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; $('#lobby').hidden = false; hud.hidden = true;
@@ -4553,6 +4594,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   function netLeave(msg) {
     const sala = net.sala;
     if (net.unsub) { try { net.unsub(); } catch (e) { /* */ } }
+    hookStream(null);
     Object.assign(net, { sala: null, unsub: null, role: '', phase: '', code: '', view: null, handover: null, reconnect: null, court: '' });
     bgTicker(false);
     if (sala) sala.leave().catch(() => {});
@@ -4570,7 +4612,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     });
   }
   function netStartCommon() {
-    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0, lost: {} });
+    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0, lost: {}, stxSent: false });
+    syncReset();
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
     $('#lobby').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
     buildPads(); audioInit(); resize(); lockMouse();
@@ -4657,77 +4700,157 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#end').hidden = true; $('#pause').hidden = true; $('#lobby').hidden = false; hud.hidden = true;
     clearPads(); startDemo(); segPaints.forEach(f => f()); net.sent = ''; resize();
   }
-  function takeAbilities(g, pe, mineOnly) { // habilidades anunciadas por otro dispositivo, cada una una sola vez
-    const ab = pe.presence.ab;
+  /* --- Sincronización durante el partido ---
+     Un solo árbitro, el anfitrión: decide qué golpes valen, cuándo cae el balón y el marcador, y los demás le siguen.
+     Cada dispositivo mueve su propio jugador sin esperar a nadie (los controles no tienen retraso) y lo manda con la hora común.
+     Hora común: cada invitado mide la diferencia entre su reloj y el del anfitrión con idas y vueltas, y se queda con la medida más limpia.
+     Con esa hora, lo que llega se adelanta exactamente lo que tardó en llegar (el balón tras un golpe y los jugadores de los demás);
+     la física no cambia: los saltos que quedan solo se suavizan al dibujar. */
+  const NET_HZ = (() => { try { const v = +new URLSearchParams(location.search).get('hz'); return v >= 10 && v <= 60 ? v : 30; } catch (e) { return 30; } })();
+  const clk = { off: 0, n: 0, s: [] };
+  const nowL = () => performance.now();
+  const nowN = () => nowL() + (net.role === 'h' ? 0 : clk.off);
+  const simN = () => nowN() - (game && game.acc ? game.acc * 1000 : 0); // instante (hora común) al que corresponde el estado simulado
+  const ballOff = { x: 0, y: 0 };
+  const sync = { q: 0, inbox: [], seen: {}, src: '', sendT: 0, hot: false, head: null, hl: [], rj: [], pend: [], echo: {}, rt: {}, lastSnap: 0, lastSt: '', lastR: -2, drift: 0, tx: 0, rx: 0, nrj: 0, unhook: null, lastPq: {} };
+  function syncReset() {
+    Object.assign(sync, { inbox: [], sendT: 0, hot: true, head: null, hl: [], rj: [], pend: [], echo: {}, lastSnap: nowL(), lastSt: '', lastR: -2, drift: 0, nrj: 0 });
+    ballOff.x = ballOff.y = 0;
+  }
+  function hookStream(sala) { // lo que llega por el canal rápido entra en la bandeja y se procesa al principio de cada paso
+    if (sync.unhook) { try { sync.unhook(); } catch (e) { /* */ } sync.unhook = null; }
+    if (sala && sala.onStream) sync.unhook = sala.onStream((d, from, at) => { sync.inbox.push({ d, from, at }); if (sync.inbox.length > 400) sync.inbox.shift(); });
+  }
+  function netSend(d) {
+    d.q = ++sync.q; sync.tx++;
+    const s = net.sala;
+    if (s.stream) s.stream(d); else s.presence({ g: d }).catch(() => {}); // sala de Claude: va en la presencia (unas 30 veces por segundo)
+  }
+  function netIn() {
+    const s = net.sala;
+    if (!s.stream) for (const p of s.peers()) { // sala de Claude: lo nuevo de la presencia de cada uno
+      const d = !p.sameTab && p.presence && p.presence.g;
+      if (d && typeof d.q === 'number' && d.q !== sync.lastPq[p.peer]) { sync.lastPq[p.peer] = d.q; sync.inbox.push({ d, from: p.peer, at: nowL() }); }
+    }
+    const box = sync.inbox; sync.inbox = [];
+    for (const m of box) {
+      const d = m.d;
+      if (!d || typeof d.q !== 'number' || typeof d.k !== 'string') continue;
+      if (d.q <= (sync.seen[m.from] || 0)) continue; // repetido o adelantado por otro más nuevo: ya no sirve
+      sync.seen[m.from] = d.q; sync.rx++;
+      if (d.k === 'h' && net.role === 'g') onSnap(d, m.from, m.at);
+      else if (d.k === 'g') onPeerMsg(d, m.from, m.at);
+    }
+    if (net.role === 'g') net.stale = (nowL() - sync.lastSnap) / 1000;
+  }
+  // Habilidades anunciadas por otro dispositivo, cada una una sola vez
+  function takeAb(g, from, ab, mineOnly) {
     if (!Array.isArray(ab)) return;
-    let seen = net.seenAb[pe.peer];
-    if (seen === undefined) { net.seenAb[pe.peer] = ab.reduce((m, a) => (Array.isArray(a) && a[0] > m ? a[0] : m), 0); return; }
+    let seen = net.seenAb[from];
+    if (seen === undefined) { net.seenAb[from] = ab.reduce((m, a) => (Array.isArray(a) && a[0] > m ? a[0] : m), 0); return; }
     for (const a of ab) {
       if (!Array.isArray(a) || !(a[0] > seen)) continue;
       seen = a[0];
       const p = g.players[a[1]];
-      if (p && p.remote && (!mineOnly || net.ctrl[p.i] === pe.peer)) VB.netAbility(g, p.i);
+      if (p && p.remote && (!mineOnly || net.ctrl[p.i] === from)) VB.netAbility(g, p.i);
     }
-    net.seenAb[pe.peer] = seen;
+    net.seenAb[from] = seen;
   }
-  // Lo que tarda en llegar un aviso del jugador i (estimado a partir de las idas y vueltas medidas)
-  function lagOf(i) {
-    const own = id => { const pe = peerOf(id), v = pe && pe.presence && pe.presence.lt; return typeof v === 'number' && v > 0 && v < 3000 ? v / 1000 : 0; };
-    const half = rt => clamp((rt - 0.03) / 2, 0, 0.25);
-    if (net.role === 'h') return half(own(net.ctrl[i]));
-    const c = net.ctrl[i];
-    return half(net.rtt || 0) + (c && c !== myPeer() ? half(own(c)) : 0); // de otro invitado: pasa por el anfitrión
+  // Jugador de otro dispositivo: su estado exacto, adelantado lo que tardó en llegar; el salto se reparte al dibujar
+  function applyPl(g, i, a, T) {
+    const p = g.players[i];
+    if (!p || !Array.isArray(a)) return;
+    const ro = p._ro || (p._ro = { x: 0, y: 0 }), rx = p.x + ro.x, ry = p.y + ro.y;
+    VB.netSetPl(g, i, a, true);
+    const lag = typeof T === 'number' ? clamp((simN() - T) / 1000, 0, 0.25) : 0;
+    for (let t = 0; t < lag - 1e-4; t += VB.STEP) VB.puppet(g, p, Math.min(VB.STEP, lag - t));
+    const dx = rx - p.x, dy = ry - p.y;
+    if (Math.hypot(dx, dy) < 140) { ro.x = dx; ro.y = dy; } else ro.x = ro.y = 0; // un teletransporte (Destello) no se suaviza
   }
-  // Jugador de otro dispositivo: lo coloco donde estará ahora, no donde estaba cuando lo mandó
-  function setRemotePl(g, i, a) {
-    VB.netSetPl(g, i, a);
-    const p = g.players[i], lag = Math.min(0.12, lagOf(i) * LAGX);
-    if (p && lag > 0.008) for (let t = 0; t < lag; t += VB.STEP) VB.puppet(g, p, Math.min(VB.STEP, lag - t));
+  // Adelanta el balón el tiempo que tardó en llegar el aviso (sin dibujarlo: la diferencia la absorbe ballOff)
+  function crossNet(g) { g.touches = 0; g.lastHitter = null; if (g.serveLive) { g.serveLive = false; g.serveRecv = true; } }
+  function ffBall(g, s) {
+    const b = g.ball;
+    s = clamp(s, 0, 0.3);
+    while (s > 1e-4 && b.y + BALL_R < GROUND - 2) { const h = Math.min(VB.STEP, s); const fl = VB.stepBall(b, g.env, h, false); if (fl & 1) crossNet(g); if (fl & 2) g.hitSeq++; s -= h; }
   }
-  // Golpe de otro dispositivo. El balón no vuelve atrás hasta el punto del golpe: sigue desde donde estaría ya
-  // (lo que tardó el aviso se calcula buscando en mi pantalla cuándo pasó el balón por ese punto) y el salto se suaviza.
-  const ballHist = [];
-  function netHit(g, h) {
-    const b = g.ball, sx = b.x, sy = b.y, was = !b.held && !b.hidden && g.state === 'rally', on = h.on;
+  // Golpe que da por bueno el árbitro (o el propio árbitro aplicando el de un invitado)
+  function authHit(g, h) {
+    const b = g.ball, sx = b.x + ballOff.x, sy = b.y + ballOff.y, vis = !b.hidden;
     if (!VB.netApply(g, h)) return false;
-    if (h.kind === 'fault' || !Array.isArray(h.b)) return true;
-    let late = -1, best = 1e9;
-    for (const e of ballHist) { if (e.bid !== on) continue; const d = Math.hypot(e.x - h.b[0], e.y - h.b[1]); if (d < best) { best = d; late = g.time - e.t; } }
-    if (best > 45) late = lagOf(h.by); // no lo encuentro (venía de lejos): uso la estimación de la red
-    catchUp = clamp(late, 0, 0.3) * FFK;
-    if (was) { ballOff.x = clamp(sx - b.x, -160, 160); ballOff.y = clamp(sy - b.y, -160, 160); }
+    if (h.kind !== 'fault' && Array.isArray(h.b)) {
+      if (typeof h.T === 'number') ffBall(g, (simN() - h.T) / 1000);
+      if (vis) { ballOff.x = clamp(sx - b.x, -160, 160); ballOff.y = clamp(sy - b.y, -160, 160); } else ballOff.x = ballOff.y = 0;
+    }
     return true;
   }
-  // Recupera el tiempo perdido sin saltos: durante unas décimas el balón va algo más deprisa hasta ponerse al día
-  function catchUpBall(g, dt) {
-    if (catchUp <= 0 || g.state !== 'rally' || g.landed || g.ball.held) { catchUp = 0; return; }
-    const b = g.ball; let extra = Math.min(catchUp, dt * CUR); catchUp -= extra;
-    while (extra > 1e-4 && b.y + BALL_R < GROUND - 2) { const h = Math.min(VB.STEP, extra); VB.stepBall(b, g.env, h, false); extra -= h; }
+  // Deriva: el balón del árbitro, llevado a este instante, frente al mío. Si se separan, manda el suyo
+  function fixBall(g, bs, T) {
+    const c = { x: bs[0], y: bs[1], vx: bs[2], vy: bs[3], rot: 0, fire: !!bs[4], curve: bs[5] | 0, curveOn: !!bs[6] };
+    let s = typeof T === 'number' ? clamp((simN() - T) / 1000, 0, 0.25) : 0;
+    while (s > 1e-4 && c.y + BALL_R < GROUND - 2) { const h = Math.min(VB.STEP, s); VB.stepBall(c, g.env, h, false); s -= h; }
+    const b = g.ball, dx = c.x - b.x, dy = c.y - b.y, d = Math.hypot(dx, dy);
+    sync.drift = d;
+    if (d < 2.5) return;
+    if ((b.x < VB.NETX) !== (c.x < VB.NETX) && Math.sign(c.x - b.x) === Math.sign(c.vx)) crossNet(g); // la corrección le hace pasar la red
+    ballOff.x = clamp(ballOff.x - dx, -160, 160); ballOff.y = clamp(ballOff.y - dy, -160, 160);
+    b.x = c.x; b.y = c.y; b.vx = c.vx; b.vy = c.vy; b.curveOn = c.curveOn;
   }
-  const ballOff = { x: 0, y: 0 }, LAGX = window.RV_LAGX != null ? +window.RV_LAGX : 0.5, FFK = window.RV_FFK != null ? +window.RV_FFK : 1, CUR = window.RV_CUR != null ? +window.RV_CUR : 0.6;
-  let catchUp = 0;
+  function clockSample(c, hr, ht, at) {
+    const rtt = (at - c) - (ht - hr);
+    if (!(rtt >= 0 && rtt < 3000)) return;
+    const off = ((hr - c) + (ht - at)) / 2;
+    clk.s.push([rtt, off, at]);
+    while (clk.s.length > 1 && at - clk.s[0][2] > 10000) clk.s.shift();
+    let best = clk.s[0]; for (const s of clk.s) if (s[0] < best[0]) best = s; // la ida y vuelta más corta es la menos engañada por esperas
+    if (!clk.n++ || Math.abs(best[1] - clk.off) > 40) clk.off = best[1]; else clk.off += clamp(best[1] - clk.off, -0.5, 0.5);
+    net.rtt = net.rtt ? net.rtt + (rtt / 1000 - net.rtt) * 0.1 : rtt / 1000;
+  }
+  const pushHl = id => { sync.hl.push(id); if (sync.hl.length > 6) sync.hl.shift(); };
+  /* --- Anfitrión: árbitro --- */
+  function onPeerMsg(d, from, at) { // estado de un invitado (al anfitrión le llega directo; a los demás invitados, reenviado)
+    const g = game;
+    if (net.role === 'h') { sync.echo[from] = [d.c, Math.round(at)]; if (d.rt > 0 && d.rt < 3000) sync.rt[from] = d.rt / 1000; }
+    if (d.mid !== net.mid) return;
+    if (d.pl && typeof d.pl === 'object') for (const k in d.pl) { const i = +k, p = g.players[i]; if (p && p.remote && net.ctrl[i] === from) applyPl(g, i, d.pl[k], d.T); }
+    if (net.role === 'h') { hostTakeHits(g, d, from); takeAb(g, from, d.ab, true); return; }
+    takeAb(g, from, d.ab, false);
+    // Golpe de otro invitado: lo adelanto sin esperar al árbitro (casi siempre lo da por bueno);
+    // si lo rechaza, el siguiente aviso del anfitrión lo deshace igual que con un golpe mío
+    if (Array.isArray(d.h) && (g.state === 'rally' || g.state === 'serve')) for (const h of d.h) {
+      const p = h && g.players[h.by];
+      if (p && p.remote && net.ctrl[p.i] === from && typeof h.id === 'string' && h.r === g.rally && h.on === g.bid && !g.chain.includes(h.id)) authHit(g, h);
+    }
+  }
+  function hostTakeHits(g, d, from) {
+    if (!Array.isArray(d.h)) return;
+    for (const h of d.h) {
+      if (!h || typeof h.id !== 'string' || g.chain.includes(h.id) || sync.rj.includes(h.id)) continue;
+      const p = g.players[h.by];
+      const ok = p && p.remote && net.ctrl[p.i] === from && h.r === g.rally && h.on === g.bid
+        && (g.state === 'rally' ? h.kind !== 'serve' : g.state === 'serve' && h.kind === 'serve' && g.server === p);
+      if (ok && authHit(g, h)) { sync.head = h; pushHl(h.id); }
+      else { sync.rj.push(h.id); if (sync.rj.length > 8) sync.rj.shift(); sync.nrj++; }
+      sync.hot = true;
+    }
+  }
+  function hostSnap(g) {
+    const pl = {};
+    for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
+    const b = g.ball, d = { k: 'h', T: Math.round(simN()), ts: Math.round(nowL()), mid: net.mid, rs: VB.netRefState(g), pl, ab: net.abs.slice(), ser: series.slice(), e: sync.echo, hl: sync.hl.slice(-4), rj: sync.rj.slice(-6) };
+    if (sync.head && sync.head.r === g.rally) d.hd = sync.head;
+    if (g.state === 'rally' && !g.landed && !b.held) d.bs = [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), b.fire ? 1 : 0, b.curve, b.curveOn ? 1 : 0, g.bid];
+    return d;
+  }
+  const r1 = v => Math.round(v * 10) / 10;
   function hostSync() {
     const g = game;
-    if (net.headR !== g.rally) { net.head = null; net.headR = g.rally; }
-    for (const p of g.players) {
-      if (!p.remote) continue;
-      const pe = peerOf(net.ctrl[p.i]), pr = pe && pe.presence;
-      if (!pr) continue;
-      const a = pr.pl && pr.pl[p.i];
-      if (a && a !== net.seenPl[p.i]) { net.seenPl[p.i] = a; setRemotePl(g, p.i, a); }
-      if (Array.isArray(pr.h)) for (const h of pr.h) { // golpes que propone: valen si son sobre el balón que yo tengo
-        if (!h || h.r !== g.rally || h.by !== p.i || h.on !== g.bid || g.chain.includes(h.id)) continue;
-        if (g.state === 'rally' ? h.kind !== 'serve' : (g.state === 'serve' && h.kind === 'serve' && g.server === p)) { if (netHit(g, h)) net.head = h; }
-      }
-      takeAbilities(g, pe, true);
-    }
-    if (g.landed && g.state === 'rally') { // punto: cuando también ha caído en la pantalla de quien defendía ese campo
-      const need = g.players.filter(p => p.remote && p.team === g.landed.side);
-      const ok = need.every(p => { const pe = peerOf(net.ctrl[p.i]); return !pe || pe.presence.ld === g.landed.bid; });
-      if (ok || g.landed.t > 3) VB.netPoint(g);
+    if (g.landed && g.state === 'rally') { // punto: espero lo justo por si llega tarde el toque de quien defendía ese campo
+      let wait = 0;
+      for (const p of g.players) if (p.remote && p.team === g.landed.side) wait = Math.max(wait, (sync.rt[net.ctrl[p.i]] || 0.1) / 2 + 0.04);
+      if (g.landed.t >= Math.min(0.3, wait)) VB.netPoint(g);
     }
   }
-
   /* --- Invitado --- */
   function guestTick(dt) {
     const hp = hostPeer();
@@ -4736,6 +4859,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (!hp) { net.lost += dt; if (net.lost > 4) startHandover(); return; }
     net.lost = 0;
     const pr = hp.presence;
+    if (pr.ver !== VERSION && (pr.ver !== undefined || pr.nick !== undefined)) { netLeave('La sala es de otra versión del juego' + (pr.ver ? ' (v' + pr.ver + ')' : '') + ' y tú tienes la v' + VERSION + '. Recargad la página todos para tener la misma.'); return; }
     if (pr.hb !== undefined) { // anfitrión callado (móvil bloqueado, sin conexión…): otro toma el mando
       if (pr.hb !== net.hbSeen) { net.hbSeen = pr.hb; net.hbIdle = 0; } else if ((net.hbIdle += dt) > (pr.phase === 'play' ? 8 : 20)) { startHandover(); return; }
     }
@@ -4772,43 +4896,40 @@ if (typeof module !== 'undefined') module.exports = VB;
     game.rally = -1; // el primer aviso del anfitrión coloca a todos
     labels = seats.map(s => (s && s.peer ? cleanNick(s.nick) || 'Invitado' : 'BOT')); net.ctrl = seats.map(s => (s && s.peer) || '');
     netStartCommon();
-    guestSync(0);
   }
-  function guestSync(dt) {
-    const g = game, hp = hostPeer(), pr = hp && hp.presence, rs = pr && pr.rs, me = myPeer();
-    if (!rs || pr.mid !== net.mid) return;
-    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); net.props = []; net.aheadT = 0; }
+  /* --- Invitado: sigue al árbitro --- */
+  function onSnap(d, from, at) {
+    const hp = hostPeer();
+    if (!hp || hp.peer !== from) return;
+    if (sync.src !== from) { sync.src = from; clk.n = 0; clk.s = []; } // anfitrión nuevo: reloj nuevo
+    const e = d.e && d.e[myPeer()];
+    if (Array.isArray(e) && typeof d.ts === 'number') clockSample(e[0], e[1], d.ts, at);
+    const g = game;
+    if (d.mid !== net.mid || !d.rs) return;
+    sync.lastSnap = nowL();
+    const rs = d.rs; sync.lastRs = rs;
+    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); sync.pend = []; ballOff.x = ballOff.y = 0; }
     VB.netRef(g, rs);
-    if (Array.isArray(pr.ser) && pr.ser.length === 2) { series[0] = clamp(pr.ser[0] | 0, 0, 999); series[1] = clamp(pr.ser[1] | 0, 0, 999); }
-    if (pr.pg && typeof pr.pg[me] === 'number' && pr.pg[me] !== net.echo) { // ida y vuelta de mis avisos
-      net.echo = pr.pg[me];
-      const rt = ((Math.round(performance.now()) % 1e9) - net.echo) / 1000;
-      if (rt > 0 && rt < 5) net.rtt = net.rtt ? net.rtt + (rt - net.rtt) * 0.2 : rt;
-    }
-    const others = net.sala.peers().filter(q => !q.sameTab && q.presence);
-    for (const p of g.players) { // jugadores de otros: de su dispositivo si sigue ahí; si no, del anfitrión
-      if (!p.remote) continue;
-      const pe = peerOf(net.ctrl[p.i]);
-      const src = pe && pe.presence.pl && pe.presence.pl[p.i] ? pe.presence : pr;
-      const a = src.pl && src.pl[p.i];
-      if (a && a !== net.seenPl[p.i]) { net.seenPl[p.i] = a; setRemotePl(g, p.i, a); }
-    }
-    for (const pe of others) takeAbilities(g, pe, false);
+    if (Array.isArray(d.ser) && d.ser.length === 2) { series[0] = clamp(d.ser[0] | 0, 0, 999); series[1] = clamp(d.ser[1] | 0, 0, 999); }
+    if (d.pl && typeof d.pl === 'object') for (const k in d.pl) { const i = +k, p = g.players[i]; if (p && p.remote) applyPl(g, i, d.pl[k], d.T); }
+    takeAb(g, from, d.ab, false);
+    const hl = Array.isArray(d.hl) ? d.hl : [], rj = Array.isArray(d.rj) ? d.rj : [];
+    sync.pend = sync.pend.filter(h => h.r === g.rally && !hl.includes(h.id) && !rj.includes(h.id));
     if (g.state !== 'serve' && g.state !== 'rally') return;
-    const head = pr.head && pr.head.r === g.rally && typeof pr.head.id === 'string' ? pr.head : null;
-    const cands = head ? [head] : [];
-    for (const pe of others) if (pe !== hp && Array.isArray(pe.presence.h)) for (const h of pe.presence.h) if (h && h.r === g.rally) cands.push(h);
-    for (const c of cands) { // golpes de otros sobre el balón que yo tengo
-      const p = g.players[c.by];
-      if (p && p.remote && c.on === g.bid && typeof c.id === 'string' && !g.chain.includes(c.id)) netHit(g, c);
-    }
-    if (head && !g.chain.includes(head.id)) VB.netApply(g, head); // voy por otro camino: manda el anfitrión
-    const hid = head ? head.id : 'r' + g.rally;
-    if (hid === g.bid) net.aheadT = 0;
-    else if ((net.aheadT += dt) > 3.5) { // mi golpe no llegó o no valió: vuelvo a lo que dice el anfitrión
-      net.aheadT = 0; net.resync = (net.resync || 0) + 1;
-      if (head) { g.chain = [head.id]; VB.netApply(g, head); } else { g.rally = -1; VB.netRally(g, rs); }
-    }
+    const hd = d.hd && d.hd.r === g.rally && typeof d.hd.id === 'string' ? d.hd : null;
+    sync.lastHd = hd; sync.lastRs = rs;
+    if (rj.includes(g.bid)) { // mi golpe no ha valido (otro tocó antes en el árbitro): vuelvo a lo que dice él al momento
+      net.resync = (net.resync || 0) + 1; sync.nrj++;
+      if (hd) { g.chain = [hd.id]; authHit(g, hd); } else { g.rally = -1; VB.netRally(g, rs); }
+    } else if (hd && !g.chain.includes(hd.id)) authHit(g, hd);
+    if (Array.isArray(d.bs) && d.bs[7] === g.bid && g.state === 'rally' && !g.landed && !g.ball.held) fixBall(g, d.bs, d.T);
+  }
+  function guestMsg(g) {
+    const pl = {};
+    for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
+    const d = { k: 'g', c: Math.round(nowL()), mid: net.mid, pl, h: sync.pend.slice(-3), ab: net.abs.slice(), rt: Math.round((net.rtt || 0) * 1000) };
+    if (clk.n) d.T = Math.round(simN());
+    return d;
   }
 
   /* --- Relevo de anfitrión: si el anfitrión se va o se queda callado, el primer jugador sentado toma el mando --- */
@@ -4854,8 +4975,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     const old = net.sala;
     if (net.unsub) { try { net.unsub(); } catch (e) { /* */ } }
     if (old && old !== sala) old.leave().catch(() => {});
-    net.sala = sala; net.unsub = sala.onPeers(() => {}, roomError);
-    sala.presence({ v: 2, role, gen: net.handover ? net.handover.gen : net.gen, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
+    net.sala = sala; net.unsub = sala.onPeers(() => {}, roomError); hookStream(sala);
+    sala.presence({ v: 2, ver: VERSION, role, gen: net.handover ? net.handover.gen : net.gen, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
   }
   async function becomeHost() {
     const h = net.handover;
@@ -4895,7 +5016,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       labels = seats.map((s, i) => (i === mi ? cleanNick(cfg.nick) || 'Tú' : s && s.peer && !s.host ? cleanNick(s.nick) || 'Invitado' : 'BOT'));
       net.playSeats = seats.map((s, i) => (i !== mi && s && s.peer && !s.host ? s.peer : ''));
       net.ctrl = net.playSeats.slice();
-      VB.restartPoint(game);
+      VB.restartPoint(game); syncReset();
       pop(480, 150, msg, SUN, 24);
     } else { net.phase = 'lobby'; if (scene === 'play') hostToLobby(); }
     renderLobby(); $('#lbNote').textContent = msg;
@@ -4925,28 +5046,31 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
 
   function netTick(dt) { if (net.role === 'h') hostTick(dt); else if (net.role === 'g') guestTick(dt); }
-  function netSync(dt) { if (net.role === 'h') hostSync(); else guestSync(dt); }
-  // Publica lo mío: mi jugador (o los míos, si soy anfitrión), mis últimos golpes y habilidades
+  function netSync() { netIn(); if (net.role === 'h') hostSync(); }
+  // Después de cada paso: lo mío sale ya si ha pasado algo (golpe, habilidad, cambio de jugada) y, si no, a ritmo fijo
   function netPublish(dt) {
-    const g = game, host = net.role === 'h', hot = g.net.out.length > 0 || g.net.abOut.length > 0;
-    for (const h of g.net.out) { if (host) net.head = h; else { net.props.push(h); if (net.props.length > 2) net.props.shift(); } }
-    for (const i of g.net.abOut) { net.abs.push([++net.abSeq, i]); if (net.abs.length > 4) net.abs.shift(); }
+    const g = game, host = net.role === 'h';
+    for (const h of g.net.out) {
+      h.T = Math.round(simN() - Math.max(0, g.time - (h.gt == null ? g.time : h.gt)) * 1000); delete h.gt;
+      if (host) { sync.head = h; pushHl(h.id); sync.hot = true; }
+      else if (g.players[h.by] && !g.players[h.by].remote) { sync.pend.push(h); if (sync.pend.length > 3) sync.pend.shift(); sync.hot = true; }
+    }
+    for (const i of g.net.abOut) { net.abs.push([++net.abSeq, i]); if (net.abs.length > 4) net.abs.shift(); sync.hot = true; }
     g.net.out.length = 0; g.net.abOut.length = 0;
-    net.sendT -= dt;
-    if (!hot && net.sendT > 0) return;
-    net.sendT = net.sala.slow && net.sala.slow() ? 0.05 : 0.033; // por el servidor de reserva, algo menos de tráfico
-    const pl = {};
-    for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
-    const patch = { pl, ab: net.abs.slice() };
-    if (host) patch.ser = series.slice();
     if (host) {
-      patch.rs = VB.netRefState(g); patch.head = net.head;
-      if (g.state === 'over' && stats.g === g) patch.stx = stats.map(r => r.slice());
-      const pg = {};
-      for (const p of net.sala.peers()) if (!p.sameTab && p.presence && typeof p.presence.pt === 'number') pg[p.peer] = p.presence.pt;
-      patch.pg = pg;
-    } else { patch.h = net.props.slice(); patch.ld = g.landed ? g.landed.bid : ''; patch.pt = Math.round(performance.now()) % 1e9; patch.lt = Math.round((net.rtt || 0) * 1000); }
-    net.sala.presence(patch).catch(() => {});
+      if (g.state !== sync.lastSt || g.rally !== sync.lastR) { sync.lastSt = g.state; sync.lastR = g.rally; sync.hot = true; }
+      if (g.state === 'over' && stats.g === g && !net.stxSent) { net.stxSent = true; net.sala.presence({ stx: stats.map(r => r.slice()) }).catch(() => {}); }
+    } else if (sync.pend.length && g.bid === sync.pend[sync.pend.length - 1].id && nowN() - (sync.pend[sync.pend.length - 1].T || 0) > 1500 && clk.n) {
+      sync.pend = []; net.resync = (net.resync || 0) + 1; // sin respuesta del árbitro: vuelvo a lo último que dijo
+      if (sync.lastHd && sync.lastHd.r === g.rally) { g.chain = [sync.lastHd.id]; authHit(g, sync.lastHd); } else if (sync.lastRs) { g.rally = -1; VB.netRally(g, sync.lastRs); }
+    }
+    const period = 1 / (net.sala.slow && net.sala.slow() ? Math.min(NET_HZ, 20) : NET_HZ);
+    sync.sendT -= dt;
+    const hot = sync.hot, again = sync.again;
+    if (sync.sendT > 0 && !hot && !again) return;
+    if (sync.sendT <= 0) sync.sendT = Math.max(sync.sendT + period, period * 0.5);
+    sync.hot = false; sync.again = hot; // lo importante sale dos veces seguidas: si se pierde un paquete, llega el otro sin esperar al siguiente turno
+    netSend(host ? hostSnap(g) : guestMsg(g));
   }
 
   function renderLobby() {
@@ -5018,7 +5142,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   // Enlace para invitar: la misma página con el servidor propio y el código de la sala
   function shareLink() { const u = new URL(location.href); u.search = ''; u.hash = ''; if (SRV) u.searchParams.set('srv', SRV.replace(/^wss:\/\//, '').replace(/\/$/, '')); if (net.code) u.searchParams.set('sala', net.code.toUpperCase()); return u.href; }
-  window.rvDebug = () => ({ drawChar, sprVariant, SPR, sprReady: () => sprReady, series, game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
+  window.rvDebug = () => ({ perfObj: perf, sala: () => net.sala, sync, clk, drawChar, sprVariant, SPR, sprReady: () => sprReady, series, game, net, scene, labels, fx, freeze, zoom, ballOff, perf, cvw: cv.width, q: () => qLevel, setCourt: id => { court = id; renderBg(); } });
 
   /* ---------- Estadísticas ---------- */
   // Por jugador: puntos, saques directos, remates, colocaciones, recepciones, planchas y fallos
@@ -5383,27 +5507,30 @@ if (typeof module !== 'undefined') module.exports = VB;
     audioScene(dt);
     if (locked() && !wantLock()) document.exitPointerLock(); // fin del partido, menú, sala…
     const t1 = performance.now();
+    const ro = scene === 'play' && !!net.sala && game && game.net;
+    if (ro) shiftPl(1); // jugadores de otros: se dibujan con el resto de la corrección todavía por repartir
     draw();
+    if (ro) shiftPl(-1);
     const t2 = performance.now(); perf.tick += (t1 - t0 - perf.tick) * 0.05; perf.draw += (t2 - t1 - perf.draw) * 0.05;
     requestAnimationFrame(frame);
   }
+  function shiftPl(sg) { for (const p of game.players) if (p._ro) { p.x += sg * p._ro.x; p.y += sg * p._ro.y; } }
   // Un paso de juego sin dibujar (el bucle normal lo dibuja después; en segundo plano no hace falta)
   function tick(dt) {
     if (!paused || net.sala) {
       clock += dt;
       if (net.sala) netTick(dt);
       const online = !!net.sala && scene === 'play' && !!game.net;
-      if (online) netSync(dt);
       if (!demo) readInputs();
       let sdt = dt;
       if (freeze > 0 && !net.sala) { freeze -= dt; sdt = 0; } // pausa de impacto
       if (net.handover || net.reconnect) sdt = 0; // mientras se cambia de anfitrión o me reconecto, el partido espera
       VB.update(game, sdt);
       if (online) {
+        netSync(); // lo recibido se aplica sobre el estado ya al día de este fotograma
         const b = game.ball;
-        ballHist.push({ t: game.time, x: b.x, y: b.y, bid: game.bid }); while (ballHist.length && game.time - ballHist[0].t > 0.6) ballHist.shift();
-        catchUpBall(game, sdt);
-        const k = Math.exp(-dt / 0.1); ballOff.x *= k; ballOff.y *= k;
+        const k = Math.exp(-dt / 0.06); ballOff.x *= k; ballOff.y *= k;
+        const kp = Math.exp(-dt / 0.08); for (const p of game.players) if (p._ro) { p._ro.x *= kp; p._ro.y *= kp; }
         netPublish(dt);
       } else ballOff.x = ballOff.y = 0;
       handleEvents(); updateFx(dt);
