@@ -523,6 +523,8 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .fr-row.on .dot { background: #2FB673; box-shadow: 0 0 0 3px rgba(47, 182, 115, .25); }
 .fr-row .who { flex: 1; min-width: 0; display: grid; } .fr-row .who b { color: var(--ink); } .fr-row .who small { color: var(--muted); font-size: 12px; }
 .fr-row .btn { padding: 6px 14px; font-size: 15px; } .fr-row .btn:disabled { opacity: .4; }
+.fr-row .btn.sent { background: #2FB673; color: #fff; opacity: 1; }
+.fr-all { width: 100%; }
 .fr-del { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 4px 6px; }
 .badge-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 4px; border-radius: 10px; background: #2FB673; color: #fff; font-size: 12px; font-weight: 700; padding: 0 5px; vertical-align: 2px; }
 #toasts { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20; display: grid; gap: 8px; width: min(92vw, 420px); pointer-events: none; }
@@ -759,6 +761,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
       <div class="go">
         <p id="lbNote" aria-live="polite"></p>
         <button type="button" class="btn ghost" id="lbLeave">Salir de la sala</button>
+        <button type="button" class="btn ghost" id="lbInvite">Invitar amigos</button>
         <button type="button" class="btn" id="lbStart">Empezar partido</button>
       </div>
     </div>
@@ -778,7 +781,8 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
       </div>
       <p class="fr-msg" id="frMsg" aria-live="polite"></p>
       <div id="frList"></div>
-      <p class="fr-note">Con «Invitar» se crea la sala y a tu amigo le sale un aviso para unirse con un toque. Tenéis que tener el juego abierto los dos.</p>
+      <button type="button" class="btn ghost fr-all" id="frAll" hidden>Invitar a todos los conectados</button>
+      <p class="fr-note" id="frNote">Con «Invitar» se crea la sala y a tu amigo le sale un aviso para unirse con un toque. Puedes invitar a varios, y quien ya esté en la sala también puede invitar a más. Tenéis que tener el juego abierto.</p>
       <div class="row"><button type="button" class="btn" id="frClose">Volver</button></div>
     </div>
   </section>
@@ -1857,11 +1861,22 @@ if (typeof module !== 'undefined') module.exports = VB;
   function setPaused(v) {
     if (scene !== 'play' || game.state === 'over') return;
     paused = v; $('#pause').hidden = !v;
+    if (net.sala && net.role === 'h' && game.net) { // el anfitrión para el partido de todos, pero solo con el balón parado
+      net.gp = v ? (ballStopped(game) ? 2 : 1) : 0; sync.hot = true;
+    }
     $('#btnRestart').hidden = !!net.sala; $('#btnTutSkip').hidden = !tut; if (tut) $('#btnTutSkip').textContent = $('#tutSkip').textContent; $('#btnQuit').textContent = net.sala ? 'Salir de la sala' : 'Menú';
-    $('#pause h2').textContent = net.sala ? 'El partido sigue' : 'Pausa';
+    pauseTitle();
     if (v) $('#btnResume').focus(); else lockMouse();
   }
 
+  const ballStopped = g => g.state === 'serve' && !g.toss && g.ball.held; // antes del saque: nadie está jugando un punto
+  function netFrozen() { return net.role === 'h' ? net.gp === 2 : sync.pz === 2; }
+  function pauseTitle() {
+    const h = $('#pause h2');
+    if (!net.sala) h.textContent = 'Pausa';
+    else if (net.role === 'h') h.textContent = net.gp === 2 ? 'Pausa para todos' : net.gp === 1 ? 'La pausa empieza al acabar el punto' : 'El partido sigue';
+    else h.textContent = sync.pz === 2 ? 'El anfitrión ha pausado el partido' : 'El partido sigue';
+  }
   /* ---------- Ratón bloqueado durante el partido ---------- */
   // Mientras se juega, el puntero queda atrapado en la pista (y oculto), así un clic no se escapa fuera del juego.
   // Escape lo suelta y pone la pausa; al seguir se vuelve a bloquear. Con pantalla táctil o en el tutorial no se bloquea.
@@ -3232,7 +3247,11 @@ if (typeof module !== 'undefined') module.exports = VB;
         text(kind + (rt > 0 ? ' · ' + Math.round(rt * 500) + ' ms' : '') + ' · ' + fps + ' fps' + (net.resync ? ' · resinc. ' + net.resync : ''), 480, 138, `700 13px ${FL}`, bad ? '#FFB1A6' : PAPER, INK, 4);
       }
     }
-    if (g.state === 'point' && g.lastPoint) {
+    if (scene === 'play' && net.sala && game.net && g.state !== 'over' && (netFrozen() || (net.role === 'h' && net.hoWait > 0))) {
+      const ho = net.role === 'h' && net.hoWait > 0;
+      text(ho ? 'Esperando a los demás…' : 'Pausa', 480, 196, `30px ${FD}`, PAPER, INK, 8);
+      text(ho ? 'El partido sigue en cuanto vuelvan a entrar.' : net.role === 'h' ? 'Pulsa Seguir para continuar.' : 'El anfitrión ha parado el partido. Seguirá cuando él quiera.', 480, 230, `700 19px ${FL}`, PAPER, INK, 5);
+    } else if (g.state === 'point' && g.lastPoint) {
       drawPointBanner(g);
     } else if (g.state === 'serve' && !g.toss && !demo && g.server && !g.server.isBot && g.stateT > 0.3) {
       const d = g.server.control;
@@ -4083,7 +4102,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   /* ---------- Amigos: código propio, lista, quién está conectado e invitaciones con un toque ---------- */
   // Cada jugador escucha en su «buzón» (un tema del servidor de mensajes público) mientras tiene el juego abierto.
   // Los amigos se saludan cada poco para saber quién está, y una invitación lleva el código de una sala ya creada.
-  const FR = { links: [], seen: new Set(), last: {}, beat: 0, ok: false, pend: null };
+  const FR = { links: [], seen: new Set(), last: {}, beat: 0, ok: false, pend: null, sent: {} };
   const FR_TOPIC = id => 'remate-volley/amigo/' + id;
   const fmtFid = id => id.slice(0, 4) + '-' + id.slice(4);
   const frOnline = id => performance.now() - (FR.last[id] || -1e9) < 75000;
@@ -4123,11 +4142,19 @@ if (typeof module !== 'undefined') module.exports = VB;
   async function frInvite(id) {
     const f = prof.friends.find(q => q.id === id); if (!f) return;
     if (!net.api) { toast('El online no está disponible en esta vista.'); return; }
-    if (net.sala && net.role !== 'h') { toast('Solo quien creó la sala puede invitar.'); return; }
-    if (!net.sala) { $('#friends').hidden = true; await netCreate(); }
+    if (!net.sala) { await netCreate(); renderFriends(); } // sin sala: la creo y sigo en la lista para invitar a más
     if (!net.sala) { toast('No he podido crear la sala.'); return; }
-    frSend(id, { t: 'inv', code: net.code }); toast('Invitación enviada a ' + f.nick + '.');
+    frSend(id, { t: 'inv', code: net.code }); FR.sent[id] = performance.now();
+    toast('Invitación enviada a ' + f.nick + '.'); renderFriends();
+    setTimeout(renderFriends, 15100);
   }
+  async function frInviteAll() {
+    const on = prof.friends.filter(f => frOnline(f.id) && !frSentNow(f.id) && !frInRoom(f.id));
+    if (!on.length) { toast('No hay más amigos conectados a los que invitar.'); return; }
+    for (const f of on) await frInvite(f.id);
+  }
+  const frInRoom = id => !!net.sala && net.sala.peers().some(p => !p.sameTab && p.presence && p.presence.fid === id);
+  const frSentNow = id => performance.now() - (FR.sent[id] || -1e9) < 15000; // tras invitar, el botón queda marcado un rato
   // Avisos arriba de la pantalla
   function toast(msg, btns, ms) {
     const box = $('#toasts'), el = document.createElement('div'); el.className = 'toast';
@@ -4136,6 +4163,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     box.append(el); setTimeout(() => el.remove(), ms || (btns ? 30000 : 4000));
   }
   function inviteToast(nick, code, from) {
+    if (net.sala && net.code === code) return; // ya estoy en esa sala
     if (ac && cfg.sound) sfx.ready();
     toast(nick + ' te invita a jugar.', [['Unirme', async () => {
       if (net.sala) await netLeave();
@@ -4148,6 +4176,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (badge) { badge.textContent = n ? String(n) : ''; badge.hidden = !n; }
     const list = $('#frList'); if (!list || $('#friends').hidden) return;
     $('#frCode').textContent = prof.fid ? fmtFid(prof.fid) : '—';
+    $('#frAll').hidden = prof.friends.filter(f => frOnline(f.id)).length < 2;
+    $('#frNote').textContent = net.sala ? 'Invitas a la sala ' + net.code.toUpperCase() + ': a cada amigo le sale un aviso para unirse con un toque. Quien ya esté en la sala también puede invitar a más.' : 'Con «Invitar» se crea la sala y a tu amigo le sale un aviso para unirse con un toque. Puedes invitar a varios, y quien ya esté en la sala también puede invitar a más. Tenéis que tener el juego abierto.';
     list.replaceChildren();
     if (!prof.friends.length) { const p = document.createElement('p'); p.className = 'fr-empty'; p.textContent = 'Aún no tienes amigos en la lista. Pásales tu código o tu enlace.'; list.append(p); }
     const sorted = [...prof.friends].sort((a, b) => frOnline(b.id) - frOnline(a.id));
@@ -4155,7 +4185,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const on = frOnline(f.id), row = document.createElement('div'); row.className = 'fr-row' + (on ? ' on' : '');
       row.innerHTML = `<i class="dot"></i><span class="who"><b></b><small>${on ? 'Conectado' : 'Sin conexión'} · ${fmtFid(f.id)}</small></span>`;
       row.querySelector('b').textContent = f.nick;
-      const inv = document.createElement('button'); inv.type = 'button'; inv.className = 'btn'; inv.textContent = 'Invitar'; inv.disabled = !on;
+      const sent = frSentNow(f.id), inv = document.createElement('button'); inv.type = 'button'; inv.className = 'btn' + (sent ? ' sent' : ''); const here = frInRoom(f.id); inv.textContent = here ? 'En la sala' : sent ? 'Invitado ✓' : 'Invitar'; inv.disabled = !on || sent || here;
       inv.addEventListener('click', () => frInvite(f.id));
       const del = document.createElement('button'); del.type = 'button'; del.className = 'fr-del'; del.textContent = '×'; del.setAttribute('aria-label', 'Quitar a ' + f.nick);
       del.addEventListener('click', () => { prof.friends = prof.friends.filter(q => q.id !== f.id); saveProf(); renderFriends(); });
@@ -4244,7 +4274,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     return new Promise((resolve, reject) => {
       // name: «rv-abcd» o, tras un relevo de anfitrión, «rv-abcd.2», «.3»…; el servidor de reserva usa siempre el nombre base
       const base = name.replace(/\.\d+$/, ''), gen = +((name.match(/\.(\d+)$/) || [0, 1])[1]);
-      const host = role === 'h', hostId = PEER_PREFIX + name, opts = RV_PEER.opts || {}, topic = 'remate-volley/1/' + base;
+      // PeerJS no admite puntos en los nombres: tras un relevo, «rv-abcd.2» se convierte en «rv-abcd-r2»
+      const host = role === 'h', hostId = PEER_PREFIX + name.replace(/\./g, '-r'), opts = RV_PEER.opts || {}, topic = 'remate-volley/1/' + base;
       const rid = () => Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
       const me = host ? hostId : keepId || 'g' + rid(), nonce = rid(), t0 = performance.now();
       let topGen = gen;
@@ -4267,7 +4298,9 @@ if (typeof module !== 'undefined') module.exports = VB;
       };
       const merge = (k, patch) => store.set(k, Object.freeze(Object.assign({}, store.get(k) || {}, patch)));
       const shut = () => { closed = true; clearInterval(beat); links.forEach(l => l.close()); try { if (peer) peer.destroy(); } catch (e) { /* */ } };
-      const reach = () => (typeof navigator === 'undefined' || navigator.onLine !== false) && (links.some(l => l.ok) || !!(hostConn && hostConn.open));
+      let hostGone = false; // el anfitrión avisó de que se iba: no es mi red
+      // ¿llego a algo? A un servidor de reserva, al anfitrión o al servidor de encuentro de la directa (si sigo conectado a él, mi red funciona)
+      const reach = () => (typeof navigator === 'undefined' || navigator.onLine !== false) && (hostGone || links.some(l => l.ok) || !!(hostConn && hostConn.open) || !!(peer && peer.open && !peer.disconnected));
       let lastAlive = true;
       const fail = code => {
         if (!done) { done = true; shut(); reject(Object.assign(new Error(code), { code })); }
@@ -4318,7 +4351,13 @@ if (typeof module !== 'undefined') module.exports = VB;
           if (host) fan(msg); else if (via === 'relay') up(msg); else if (hostConn && hostConn.open) hostConn.send(msg);
         },
         onPeers: (f, onErr) => { cbs.push(f); if (onErr) errs.push(onErr); return () => { cbs = cbs.filter(x => x !== f); errs = errs.filter(x => x !== onErr); }; },
-        leave: async () => { if (closed) return; if (!host && via === 'relay' && pick) up({ t: 'bye', from: me }); shut(); },
+        leave: async () => {
+          if (closed) return;
+          if (!host && via === 'relay' && pick) up({ t: 'bye', from: me });
+          if (host) { const bye = { t: 'bye', from: me, host: 1 }; conns.forEach(c => { if (!c.relays && c.open) { try { c.send(bye); } catch (e) { /* */ } } }); links.forEach(l => { if (l.ok) l.pub(bye); }); } // aviso a todos: el siguiente toma el mando ya
+          shut();
+        },
+        hostLeft: () => hostGone,
         relays: () => (host ? links.filter(busy).length : [pick, twin].filter(l => l && l.ok).length),
         // ¿llego a algo? Si no llego a ningún servidor ni al anfitrión, el que se ha quedado sin red soy yo (no es que el anfitrión se haya ido)
         alive: () => (closed ? lastAlive : reach()),
@@ -4337,7 +4376,7 @@ if (typeof module !== 'undefined') module.exports = VB;
           for (const k in m.peers) if (k !== me && m.peers[k] && typeof m.peers[k] === 'object') store.set(k, Object.freeze(m.peers[k]));
           rebuild(); ready();
         } else if (m.t === 'p' && typeof m.from === 'string' && m.from !== me && m.p && typeof m.p === 'object') { if (fresh(m)) { merge(m.from, m.p); rebuild(); } }
-        else if (m.t === 'bye') { if (m.from === me) { if (done) fail('upstream_error'); } else { store.delete(m.from); rebuild(); } }
+        else if (m.t === 'bye') { if (m.from === me) { if (done) fail('upstream_error'); } else { if (m.host) hostGone = true; store.delete(m.from); rebuild(); } }
       };
       const onBus = (l, m) => {
         if (closed) return;
@@ -4528,7 +4567,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 48; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 49; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4585,7 +4624,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       props: [], abs: [], head: null, seenAb: {}, seenPl: {}, myIdx: -1, myChar: cfg.slots[0].char, rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null,
       hostSeat: 0, hostIdx: 0, seenMv: {}, mvSeq: 0, base: 'rv-' + code, gen: 1, hb: 0, hbT: 0, hbSeen: null, hbIdle: 0, court: role === 'h' ? prof.court : '', handover: null });
     net.unsub = sala.onPeers(() => {}, roomError); hookStream(sala);
-    sala.presence({ v: 2, ver: VERSION, role, gen: 1, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
+    sala.presence({ v: 2, ver: VERSION, fid: prof.fid || '', role, gen: 1, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
     bgTicker(document.hidden);
     endTut(); scene = 'lobby'; paused = false;
     $('#menu').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; $('#lobby').hidden = false; hud.hidden = true;
@@ -4612,7 +4651,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     });
   }
   function netStartCommon() {
-    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0, lost: {}, stxSent: false });
+    Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0, lost: {}, stxSent: false, gp: 0, hoWait: 0 });
     syncReset();
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
     $('#lobby').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; hud.hidden = false;
@@ -4714,7 +4753,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const ballOff = { x: 0, y: 0 };
   const sync = { q: 0, inbox: [], seen: {}, src: '', sendT: 0, hot: false, head: null, hl: [], rj: [], pend: [], echo: {}, rt: {}, lastSnap: 0, lastSt: '', lastR: -2, drift: 0, tx: 0, rx: 0, nrj: 0, unhook: null, lastPq: {} };
   function syncReset() {
-    Object.assign(sync, { inbox: [], sendT: 0, hot: true, head: null, hl: [], rj: [], pend: [], echo: {}, lastSnap: nowL(), lastSt: '', lastR: -2, drift: 0, nrj: 0 });
+    Object.assign(sync, { pz: 0, inbox: [], sendT: 0, hot: true, head: null, hl: [], rj: [], pend: [], echo: {}, lastSnap: nowL(), lastSt: '', lastR: -2, drift: 0, nrj: 0 });
     ballOff.x = ballOff.y = 0;
   }
   function hookStream(sala) { // lo que llega por el canal rápido entra en la bandeja y se procesa al principio de cada paso
@@ -4837,7 +4876,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   function hostSnap(g) {
     const pl = {};
     for (const p of g.players) if (!p.remote) pl[p.i] = VB.netPl(g, p);
-    const b = g.ball, d = { k: 'h', T: Math.round(simN()), ts: Math.round(nowL()), mid: net.mid, rs: VB.netRefState(g), pl, ab: net.abs.slice(), ser: series.slice(), e: sync.echo, hl: sync.hl.slice(-4), rj: sync.rj.slice(-6) };
+    const b = g.ball, d = { k: 'h', T: Math.round(simN()), ts: Math.round(nowL()), mid: net.mid, rs: VB.netRefState(g), pl, ab: net.abs.slice(), ser: series.slice(), e: sync.echo, hl: sync.hl.slice(-4), rj: sync.rj.slice(-6), pz: net.gp | 0 };
     if (sync.head && sync.head.r === g.rally) d.hd = sync.head;
     if (g.state === 'rally' && !g.landed && !b.held) d.bs = [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), b.fire ? 1 : 0, b.curve, b.curveOn ? 1 : 0, g.bid];
     return d;
@@ -4856,7 +4895,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const hp = hostPeer();
     if (net.reconnect) { net.reconnect.t += dt; return; }
     if (net.handover) { handoverTick(dt, hp); return; }
-    if (!hp) { net.lost += dt; if (net.lost > 4) startHandover(); return; }
+    if (!hp) { net.lost = (+net.lost || 0) + dt; if (net.lost > (net.sala.hostLeft && net.sala.hostLeft() ? 0.3 : 3)) startHandover(); return; }
     net.lost = 0;
     const pr = hp.presence;
     if (pr.ver !== VERSION && (pr.ver !== undefined || pr.nick !== undefined)) { netLeave('La sala es de otra versión del juego' + (pr.ver ? ' (v' + pr.ver + ')' : '') + ' y tú tienes la v' + VERSION + '. Recargad la página todos para tener la misma.'); return; }
@@ -4907,6 +4946,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const g = game;
     if (d.mid !== net.mid || !d.rs) return;
     sync.lastSnap = nowL();
+    if ((d.pz | 0) !== sync.pz) { sync.pz = d.pz | 0; if (paused) pauseTitle(); }
     const rs = d.rs; sync.lastRs = rs;
     if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); sync.pend = []; ballOff.x = ballOff.y = 0; }
     VB.netRef(g, rs);
@@ -4976,14 +5016,14 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (net.unsub) { try { net.unsub(); } catch (e) { /* */ } }
     if (old && old !== sala) old.leave().catch(() => {});
     net.sala = sala; net.unsub = sala.onPeers(() => {}, roomError); hookStream(sala);
-    sala.presence({ v: 2, ver: VERSION, role, gen: net.handover ? net.handover.gen : net.gen, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
+    sala.presence({ v: 2, ver: VERSION, fid: prof.fid || '', role, gen: net.handover ? net.handover.gen : net.gen, nick: cfg.nick, char: net.myChar, kit: prof.kit, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
   }
   async function becomeHost() {
     const h = net.handover;
     if (net.direct) {
       let sala = null;
       for (let k = 0; k < 4 && !sala && net.handover === h; k++) {
-        try { sala = await p2pApi.join(net.base + '.' + h.gen, 'h'); } catch (e) { if (e && e.code === 'taken') h.gen++; else await wait(900); }
+        try { sala = await p2pApi.join(net.base + '.' + h.gen, 'h'); } catch (e) { if (window.RV_LOGNET) console.log('relevo: no abro sala', e && e.code, h.gen); if (e && e.code === 'taken') h.gen++; else await wait(900); }
       }
       if (net.handover !== h) { if (sala) sala.leave().catch(() => {}); return; }
       if (!sala) { netLeave('Se perdió la conexión con la sala.'); return; }
@@ -5016,7 +5056,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       labels = seats.map((s, i) => (i === mi ? cleanNick(cfg.nick) || 'Tú' : s && s.peer && !s.host ? cleanNick(s.nick) || 'Invitado' : 'BOT'));
       net.playSeats = seats.map((s, i) => (i !== mi && s && s.peer && !s.host ? s.peer : ''));
       net.ctrl = net.playSeats.slice();
-      VB.restartPoint(game); syncReset();
+      VB.restartPoint(game); syncReset(); net.gp = 0; net.hoWait = 10; // el partido espera a que vuelvan los demás (como mucho 10 s)
       pop(480, 150, msg, SUN, 24);
     } else { net.phase = 'lobby'; if (scene === 'play') hostToLobby(); }
     renderLobby(); $('#lbNote').textContent = msg;
@@ -5058,6 +5098,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     for (const i of g.net.abOut) { net.abs.push([++net.abSeq, i]); if (net.abs.length > 4) net.abs.shift(); sync.hot = true; }
     g.net.out.length = 0; g.net.abOut.length = 0;
     if (host) {
+      if (net.gp === 1 && ballStopped(g)) { net.gp = 2; sync.hot = true; pauseTitle(); } // acabó el punto: ahora sí, pausa para todos
       if (g.state !== sync.lastSt || g.rally !== sync.lastR) { sync.lastSt = g.state; sync.lastR = g.rally; sync.hot = true; }
       if (g.state === 'over' && stats.g === g && !net.stxSent) { net.stxSent = true; net.sala.presence({ stx: stats.map(r => r.slice()) }).catch(() => {}); }
     } else if (sync.pend.length && g.bid === sync.pend[sync.pend.length - 1].id && nowN() - (sync.pend[sync.pend.length - 1].T || 0) > 1500 && clk.n) {
@@ -5525,6 +5566,12 @@ if (typeof module !== 'undefined') module.exports = VB;
       let sdt = dt;
       if (freeze > 0 && !net.sala) { freeze -= dt; sdt = 0; } // pausa de impacto
       if (net.handover || net.reconnect) sdt = 0; // mientras se cambia de anfitrión o me reconecto, el partido espera
+      if (online && net.role === 'h' && net.hoWait > 0) { // anfitrión nuevo: espero a que los demás vuelvan a entrar
+        const here = new Set(net.sala.peers().map(p => p.peer));
+        net.hoWait = net.playSeats.every(id => !id || here.has(id)) ? Math.min(net.hoWait, 0.6) - dt : net.hoWait - dt;
+        sdt = 0;
+      }
+      if (online && netFrozen()) sdt = 0; // pausa del anfitrión para todos
       VB.update(game, sdt);
       if (online) {
         netSync(); // lo recibido se aplica sobre el estado ya al día de este fotograma
@@ -5654,6 +5701,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     netInit();
     $('#btnFriends').addEventListener('click', openFriends);
     $('#frClose').addEventListener('click', () => { $('#friends').hidden = true; });
+    $('#frAll').addEventListener('click', frInviteAll);
+    $('#lbInvite').addEventListener('click', openFriends);
     $('#frAddBtn').addEventListener('click', () => { const e = frAdd($('#frAddCode').value); $('#frMsg').textContent = e || 'Añadido. Cuando abra el juego te aparecerá conectado.'; if (!e) $('#frAddCode').value = ''; });
     $('#frAddCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#frAddBtn').click(); });
     $('#frCopy').addEventListener('click', async () => {
