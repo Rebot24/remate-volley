@@ -4576,7 +4576,16 @@ if (typeof module !== 'undefined') module.exports = VB;
   // Servidor TURN: reenvía la conexión directa cuando la red no la deja pasar (datos móviles, wifis que aíslan a los dispositivos).
   // TURN_CFG admite una dirección que devuelve la lista de servidores (Metered: https://APP.metered.live/api/v1/turn/credentials?apiKey=CLAVE)
   // o la lista fija [{ urls, username, credential }]. También se puede probar con ?turn=DIRECCION en el enlace.
-  const TURN_CFG = window.RV_TURN || (() => { try { return new URLSearchParams(location.search).get('turn') || ''; } catch (e) { return ''; } })() || '';
+  // Credencial de Metered (cuenta del creador del juego, plan gratuito): va a la vista porque el juego es una página sin servidor
+  const TURN_U = '657f5e1fdbd4d1ffd834007c', TURN_P = '+ACyeYkI9ZXyK+Bz';
+  const TURN_DEF = [
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    { urls: 'turn:global.relay.metered.ca:80', username: TURN_U, credential: TURN_P },
+    { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: TURN_U, credential: TURN_P },
+    { urls: 'turn:global.relay.metered.ca:443', username: TURN_U, credential: TURN_P },
+    { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: TURN_U, credential: TURN_P },
+  ];
+  const TURN_CFG = window.RV_TURN || (() => { try { return new URLSearchParams(location.search).get('turn') || ''; } catch (e) { return ''; } })() || TURN_DEF;
   const ICE_BASE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }];
   let iceCache = null, iceT = 0;
   async function iceServers() {
@@ -4621,7 +4630,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 53; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 54; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
