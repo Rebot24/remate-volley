@@ -4647,7 +4647,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 55; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 56; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4834,6 +4834,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const ballOff = { x: 0, y: 0 };
   const sync = { q: 0, inbox: [], seen: {}, src: '', sendT: 0, hot: false, head: null, hl: [], rj: [], pend: [], echo: {}, rt: {}, lastSnap: 0, lastSt: '', lastR: -2, drift: 0, tx: 0, rx: 0, nrj: 0, unhook: null, lastPq: {} };
   function syncReset() {
+    BH.length = 0; ballD = 0;
     Object.assign(sync, { pz: 0, inbox: [], sendT: 0, hot: true, head: null, hl: [], rj: [], pend: [], echo: {}, lastSnap: nowL(), lastSt: '', lastR: -2, drift: 0, nrj: 0 });
     ballOff.x = ballOff.y = 0;
   }
@@ -4899,11 +4900,13 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   // Golpe que da por bueno el árbitro (o el propio árbitro aplicando el de un invitado)
   function authHit(g, h) {
-    const b = g.ball, sx = b.x + ballOff.x, sy = b.y + ballOff.y, vis = !b.hidden;
+    const b = g.ball, d0 = dispBall(g), vis = !b.hidden;
     if (!VB.netApply(g, h)) return false;
     if (h.kind !== 'fault' && Array.isArray(h.b)) {
-      if (typeof h.T === 'number') ffBall(g, (simN() - h.T) / 1000);
-      if (vis) { ballOff.x = clamp(sx - b.x, -160, 160); ballOff.y = clamp(sy - b.y, -160, 160); } else ballOff.x = ballOff.y = 0;
+      const q = h.b;
+      if (typeof h.T === 'number') { ffBall(g, (simN() - h.T) / 1000); rewriteBH(g, { x: q[0], y: q[1], vx: q[2], vy: q[3], curve: q[5] }, h.T); }
+      const d1 = dispBall(g); // con el balón dibujado en diferido, si el golpe llega antes de que se dibuje ese momento, no hay salto
+      if (vis) { ballOff.x = clamp(d0.x + ballOff.x - d1.x, -160, 160); ballOff.y = clamp(d0.y + ballOff.y - d1.y, -160, 160); } else ballOff.x = ballOff.y = 0;
       if (typeof h.T === 'number') sync.ballTau = clamp((simN() - h.T) / 1000, 0.06, 0.2); // aviso muy tardío (servidor lento): el balón se pone al día más despacio, sin salto brusco
     }
     return true;
@@ -4917,8 +4920,11 @@ if (typeof module !== 'undefined') module.exports = VB;
     sync.drift = d; if (d >= 2.5) { DG.fix++; DG.fixPx += d; }
     if (d < 2.5) return;
     if ((b.x < VB.NETX) !== (c.x < VB.NETX) && Math.sign(c.x - b.x) === Math.sign(c.vx)) crossNet(g); // la corrección le hace pasar la red
-    ballOff.x = clamp(ballOff.x - dx, -160, 160); ballOff.y = clamp(ballOff.y - dy, -160, 160);
+    const d0 = dispBall(g);
     b.x = c.x; b.y = c.y; b.vx = c.vx; b.vy = c.vy; b.curveOn = c.curveOn;
+    if (typeof T === 'number') rewriteBH(g, { x: bs[0], y: bs[1], vx: bs[2], vy: bs[3], curve: bs[5] | 0, curveOn: !!bs[6] }, T);
+    const d1 = dispBall(g);
+    ballOff.x = clamp(ballOff.x + d0.x - d1.x, -160, 160); ballOff.y = clamp(ballOff.y + d0.y - d1.y, -160, 160);
   }
   function clockSample(c, hr, ht, at) {
     const rtt = (at - c) - (ht - hr);
@@ -5033,7 +5039,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     sync.lastSnap = nowL();
     if ((d.pz | 0) !== sync.pz) { sync.pz = d.pz | 0; if (paused) pauseTitle(); }
     const rs = d.rs; sync.lastRs = rs;
-    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); sync.pend = []; ballOff.x = ballOff.y = 0; for (const q of g.players) q._buf = null; }
+    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); sync.pend = []; ballOff.x = ballOff.y = 0; BH.length = 0; ballD = 0; for (const q of g.players) q._buf = null; }
     VB.netRef(g, rs);
     if (Array.isArray(d.ser) && d.ser.length === 2) { series[0] = clamp(d.ser[0] | 0, 0, 999); series[1] = clamp(d.ser[1] | 0, 0, 999); }
     if (d.pl && typeof d.pl === 'object') for (const k in d.pl) { const i = +k, p = g.players[i]; if (p && p.remote) applyPl(g, i, d.pl[k], d.T); }
@@ -5683,7 +5689,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (!game || !game.players) return;
     if (sg > 0) {
       const k = 1 - clamp((game.acc || 0) / VB.STEP, 0, 1), set = o => { const dx = o.x - (o._px ?? o.x), dy = o.y - (o._py ?? o.y), ok = Math.abs(dx) < 40 && Math.abs(dy) < 40; o._ix = ok ? dx * k : 0; o._iy = ok ? dy * k : 0; o.x -= o._ix; o.y -= o._iy; };
-      set(game.ball); for (const p of game.players) { if (p.remote && p._buf) { p._ix = p._iy = 0; continue; } set(p); }
+      if (ballD > 0.5 && scene === 'play' && net.sala && game.net) { const b = game.ball, q = histAt(game, simN() - ballD); b._ix = b.x - q.x; b._iy = b.y - q.y; b.x = q.x; b.y = q.y; } else set(game.ball);
+      for (const p of game.players) { if (p.remote && p._buf) { p._ix = p._iy = 0; continue; } set(p); }
     } else {
       const un = o => { o.x += o._ix || 0; o.y += o._iy || 0; o._ix = o._iy = 0; };
       un(game.ball); for (const p of game.players) un(p);
@@ -5691,6 +5698,65 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   // Jugadores de otros: se dibujan VIEW_D ms en el pasado, interpolando entre sus avisos (con su velocidad), así no dan tirones
   // aunque los avisos lleguen a ráfagas o se pierda alguno; si falta el siguiente aviso, se sigue su trayectoria un momento
+  // Balón en diferido cerca de los demás: cuando va hacia un jugador de otro dispositivo, se dibuja con el mismo retraso con el que
+  // vemos a ese jugador. Así llega a su mano justo cuando llega su golpe (que viene con retraso por la red) y sale por la trayectoria
+  // buena, sin salto. Cuando vuelve hacia mí, se pone al día poco a poco (a 0,5x–1,5x de velocidad), y mis golpes siguen siendo al momento.
+  // Solo cambia el dibujo: la física y el árbitro no.
+  const BH = []; let ballD = 0;
+  function pushBH(g) {
+    const b = g.ball, t = simN();
+    if (BH.length && (g.rally !== BH.r || Math.hypot(b.x - BH[BH.length - 1].x, b.y - BH[BH.length - 1].y) > 200)) BH.length = 0; // jugada nueva o salto enorme
+    BH.r = g.rally; BH.push({ t, x: b.x, y: b.y });
+    while (BH.length > 2 && BH[0].t < t - 600) BH.shift();
+  }
+  function histAt(g, t) {
+    const b = g.ball, n = BH.length;
+    if (!n) return { x: b.x, y: b.y };
+    const last = BH[n - 1], now = simN();
+    if (t >= last.t) { const k = now > last.t ? clamp((t - last.t) / (now - last.t), 0, 1) : 1; return { x: last.x + (b.x - last.x) * k, y: last.y + (b.y - last.y) * k }; }
+    if (t <= BH[0].t) return { x: BH[0].x, y: BH[0].y };
+    let j = n - 1; while (j > 0 && BH[j - 1].t > t) j--;
+    const A = BH[j - 1], B = BH[j], k = (t - A.t) / Math.max(1e-6, B.t - A.t);
+    return { x: A.x + (B.x - A.x) * k, y: A.y + (B.y - A.y) * k };
+  }
+  const dispBall = g => (ballD > 0.5 ? histAt(g, simN() - ballD) : { x: g.ball.x, y: g.ball.y });
+  // El pasado del balón deja de valer desde T0: lo rehago con el estado bueno de ese instante
+  function rewriteBH(g, st, T0) {
+    if (!BH.length || T0 >= simN()) return;
+    const c = { x: st.x, y: st.y, vx: st.vx, vy: st.vy, rot: 0, curve: st.curve || 0, curveOn: !!st.curveOn };
+    let i = 0; while (i < BH.length && BH[i].t <= T0) i++;
+    BH.splice(i, 0, { t: T0, x: c.x, y: c.y });
+    let t = T0;
+    for (let j = i + 1; j < BH.length; j++) {
+      let s = (BH[j].t - t) / 1000;
+      while (s > 1e-4 && c.y + BALL_R < GROUND - 2) { const h = Math.min(VB.STEP, s); VB.stepBall(c, g.env, h, false); s -= h; }
+      t = BH[j].t; BH[j].x = c.x; BH[j].y = Math.min(c.y, GROUND - BALL_R);
+    }
+  }
+  // Retraso con el que vemos a cada jugador de otro dispositivo: lo que tarda su aviso en llegar (y un margen), o más si llegan a trompicones
+  function lagMs(p) {
+    const own = net.ctrl[p.i];
+    if (net.role === 'h') return ((sync.rt[own] || 0.1) / 2) * 1000;
+    const viaHost = own && hostPeer() && own !== hostPeer().peer; // de otro invitado: pasa por el anfitrión
+    return ((net.rtt || 0.1) / 2) * (viaHost ? 2 : 1) * 1000;
+  }
+  const plDelay = p => clamp(Math.max(viewD, lagMs(p) + 45), 40, 250);
+  function ballDelay(g, dt) {
+    const b = g.ball; let target = 0;
+    if (g.state === 'serve' && g.server && g.server.remote) target = plDelay(g.server);
+    else if (g.state === 'rally' && !b.held) {
+      const side = b.x < VB.NETX ? 0 : 1, here = g.players.filter(p => p.team === side);
+      const rem = here.filter(p => p.remote), loc = here.filter(p => !p.remote);
+      if (rem.length) {
+        const dist = p => Math.hypot(p.x - b.x, (p.y - p.ch.h * 0.7) - b.y);
+        const nr = rem.reduce((a, p) => (dist(p) < dist(a) ? p : a)), dr = dist(nr);
+        const dl = loc.length ? Math.min(...loc.map(dist)) : 1e9;
+        target = plDelay(nr) * clamp(0.5 + (dl - dr) / 160, 0, 1);
+      }
+    }
+    const lim = 0.6 * dt * 1000; // el balón dibujado va como mucho entre 0,4x y 1,6x de su velocidad mientras se ajusta el retraso
+    ballD = clamp(ballD + clamp(target - ballD, -lim, lim), 0, 250);
+  }
   // Margen con el que se dibuja a los demás: lo justo para tener siempre el aviso siguiente (50 ms en una buena conexión,
   // más si los avisos llegan espaciados o a trompicones, como por la sala de Claude)
   let viewD = 50, viewT = 0;
@@ -5700,10 +5766,10 @@ if (typeof module !== 'undefined') module.exports = VB;
       for (const f of Object.values(DG.from)) { const a = f.gaps.slice(-90).sort((x, y) => x - y); if (a.length > 20) need = Math.max(need, a[Math.floor(a.length * 0.9)] + 15); }
       viewD += clamp(clamp(need, 50, 220) - viewD, -10, 10);
     }
-    const rT = simN() - viewD;
     for (const p of g.players) {
       const ro = p._ro || (p._ro = { x: 0, y: 0 }), b = p._buf;
       if (!p.remote || !b || !b.length) { ro.x = ro.y = 0; continue; }
+      const rT = simN() - plDelay(p);
       let j = b.length - 1; while (j > 0 && b[j].T > rT) j--;
       const s0 = b[j], s1 = b[j + 1];
       let X, Y;
@@ -5743,7 +5809,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         const b = game.ball;
         const tau = sync.ballTau || 0.06, k = Math.exp(-dt / tau); ballOff.x *= k; ballOff.y *= k;
         if (Math.abs(ballOff.x) + Math.abs(ballOff.y) < 1) sync.ballTau = 0.06;
-        remoteView(game);
+        remoteView(game); ballDelay(game, dt); pushBH(game);
         netPublish(dt);
       } else ballOff.x = ballOff.y = 0;
       handleEvents(); updateFx(dt);
