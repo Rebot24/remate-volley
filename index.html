@@ -1873,7 +1873,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
     $('#btnRestart').hidden = !!net.sala; $('#btnTutSkip').hidden = !tut; if (tut) $('#btnTutSkip').textContent = $('#tutSkip').textContent; $('#btnQuit').textContent = net.sala ? 'Salir de la sala' : 'Menú';
     pauseTitle();
-    const dg = !!net.sala && game.net; $('#btnDiag').hidden = !dg; $('#diagBox').hidden = !(dg && v); if (dg && v) $('#diagBox').textContent = diagText();
+    const dg = !!net.sala && game.net; $('#btnDiag').hidden = !dg; $('#diagBox').hidden = !(dg && v); if (dg && v) diagText().then(t => { $('#diagBox').textContent = t; });
     if (v) $('#btnResume').focus(); else lockMouse();
   }
 
@@ -4375,6 +4375,23 @@ if (typeof module !== 'undefined') module.exports = VB;
           else if (via === 'relay') up(msg);
         },
         onStream: f => { sCbs.push(f); return () => { const i = sCbs.indexOf(f); if (i >= 0) sCbs.splice(i, 1); }; },
+        // Datos de la conexión WebRTC (para el diagnóstico): tipo de camino (directo, a través de TURN…), servidor y retraso de la red
+        iceStats: async () => {
+          const pcs = host ? [...conns.values()].filter(c => !c.relays && c.peerConnection).map(c => c.peerConnection) : hostConn && hostConn.peerConnection ? [hostConn.peerConnection] : [];
+          const out = [];
+          for (const pc of pcs) {
+            try {
+              const st = await pc.getStats(); let pair = null; const byId = {};
+              st.forEach(s => { byId[s.id] = s; });
+              st.forEach(s => { if (s.type === 'transport' && s.selectedCandidatePairId) pair = byId[s.selectedCandidatePairId]; });
+              if (!pair) st.forEach(s => { if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') pair = s; });
+              if (!pair) { out.push({ estado: 'sin par elegido' }); continue; }
+              const L = byId[pair.localCandidateId] || {}, R = byId[pair.remoteCandidateId] || {};
+              out.push({ local: L.candidateType + '/' + (L.protocol || '') + (L.relayProtocol ? '/' + L.relayProtocol : ''), remoto: R.candidateType + '/' + (R.protocol || ''), servidor_turn: L.candidateType === 'relay' ? (L.url || L.address || '?') : R.candidateType === 'relay' ? 'el del otro: ' + (R.address || '?') : null, red_ida_vuelta_ms: pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null });
+            } catch (e) { out.push({ error: String(e && e.message || e).slice(0, 60) }); }
+          }
+          return out;
+        },
         fast: () => (host ? [...conns.values()].filter(c => c.fast && c.fast.readyState === 'open').length : hostConn && hostConn.fast && hostConn.fast.readyState === 'open' ? 1 : 0),
         name, peers: () => snap, via: () => via, link: () => (pick ? pick.url : ''), slow: () => (host ? links.some(busy) : via === 'relay'),
         presence: async patch => {
@@ -4630,7 +4647,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 54; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 55; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -5166,12 +5183,13 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (f.last) { f.gaps.push(Math.round(at - f.last)); if (f.gaps.length > 600) f.gaps.shift(); }
     f.last = at;
   }
-  function diagText() {
+  async function diagText() {
+    let ice = null; try { ice = net.sala && net.sala.iceStats ? await net.sala.iceStats() : null; } catch (e) { ice = null; }
     const pc = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
     const s = net.sala, secs = Math.max(1, (performance.now() - DG.t0) / 1000), ft = DG.ft;
     const via = !s ? '-' : !s.via ? 'sala de Claude' : s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0) ? 'reserva' + (s.link && s.link() ? ' (' + s.link().replace(/^wss?:\/\//, '').split('/')[0] + ')' : '') : s.via() === 'direct' || net.role === 'h' ? 'directa' : s.via() || '?';
     const o = {
-      turn: TURN_CFG ? 'sí' : 'no', version: VERSION, rol: net.role === 'h' ? 'anfitrion' : 'invitado', camino: via, canalRapido: s && s.fast ? s.fast() : null,
+      turn: TURN_CFG ? 'sí' : 'no', conexion: ice, version: VERSION, rol: net.role === 'h' ? 'anfitrion' : 'invitado', camino: via, canalRapido: s && s.fast ? s.fast() : null,
       ida_vuelta_ms: net.role === 'g' ? Math.round((net.rtt || 0) * 1000) : Object.values(sync.rt).map(v => Math.round(v * 1000)),
       reloj_muestras: clk.n,
       recibido: Object.entries(DG.from).map(([k, f]) => ({ de: k.slice(-6), porSeg: +(f.n / secs).toFixed(1), hueco_p50: pc(f.gaps, 0.5), hueco_p95: pc(f.gaps, 0.95), hueco_max: f.gaps.length ? Math.max(...f.gaps) : 0, perdidos_pct: f.qMax > f.q0 ? Math.max(0, Math.round(100 * (1 - (f.n - f.dup) / (f.qMax - f.q0 + 1)))) : 0, repetidos: f.dup })),
@@ -5829,7 +5847,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const quit = () => (net.sala ? netLeave() : toMenu());
     $('#btnQuit').addEventListener('click', quit);
     $('#btnDiag').addEventListener('click', async () => {
-      const t = diagText(); $('#diagBox').textContent = t; $('#diagBox').hidden = false;
+      const t = await diagText(); $('#diagBox').textContent = t; $('#diagBox').hidden = false;
       let ok = false; try { await navigator.clipboard.writeText(t); ok = true; } catch (e) { /* */ }
       if (!ok) { const rg = document.createRange(); rg.selectNodeContents($('#diagBox')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rg); try { ok = document.execCommand('copy'); } catch (e) { /* */ } }
       toast(ok ? 'Diagnóstico copiado: pégalo en el chat.' : 'Selecciona el texto del recuadro y cópialo.');
