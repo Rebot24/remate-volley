@@ -525,6 +525,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .fr-row .btn { padding: 6px 14px; font-size: 15px; } .fr-row .btn:disabled { opacity: .4; }
 .fr-row .btn.sent { background: #2FB673; color: #fff; opacity: 1; }
 .fr-all { width: 100%; }
+.stats .plus { margin-left: 2px; font-weight: 800; color: #E89B00; }
 .diag { margin: 12px 0 0; max-height: 34vh; overflow: auto; font: 11px/1.35 ui-monospace, monospace; background: var(--paper-2); color: var(--ink); padding: 8px; border-radius: 8px; white-space: pre-wrap; text-align: left; }
 .fr-del { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 4px 6px; }
 .badge-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 4px; border-radius: 10px; background: #2FB673; color: #fff; font-size: 12px; font-weight: 700; padding: 0 5px; vertical-align: 2px; }
@@ -729,6 +730,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
       <div class="go">
         <p id="goNote"></p>
         <button type="button" class="btn ghost" id="btnFriends">Amigos <span class="badge-n" id="frCount" hidden></span></button>
+        <button type="button" class="btn ghost" id="btnCodes">Códigos</button>
         <button type="button" class="btn ghost" id="btnTrain">Entrenar</button>
         <button type="button" class="btn" id="btnPlay">Jugar</button>
       </div>
@@ -765,6 +767,20 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <button type="button" class="btn ghost" id="lbInvite">Invitar amigos</button>
         <button type="button" class="btn" id="lbStart">Empezar partido</button>
       </div>
+    </div>
+  </section>
+
+  <section id="codes" class="layer card-layer" hidden aria-label="Códigos">
+    <div class="card fr-card">
+      <h2>Códigos</h2>
+      <p class="fr-note">Escribe un código para desbloquear personajes y cosas especiales.</p>
+      <div class="fr-add">
+        <input id="codeIn" type="text" maxlength="24" placeholder="CÓDIGO" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Código">
+        <button type="button" class="btn" id="codeBtn">Canjear</button>
+      </div>
+      <p class="fr-msg" id="codeMsg" aria-live="polite"></p>
+      <div id="codeList"></div>
+      <div class="row"><button type="button" class="btn" id="codeClose">Volver</button></div>
     </div>
   </section>
 
@@ -861,7 +877,14 @@ const VB = (() => {
       ab: { name: 'Doble salto', desc: 'Durante 5 s puede volver a saltar en el aire una vez por salto.', cd: 8 } },
     { id: 'ciclon', name: 'Nowaki', role: 'Tormenta', h: 80, vel: 3, sal: 4, pot: 4, tec: 3,
       ab: { name: 'Ráfaga', desc: 'Un golpe de viento: en su campo levanta el balón hacia el rival; en el campo rival lo aplasta contra el suelo.', cd: 11 } },
+    // Personajes especiales: solo con código. ak: qué habilidad usa (la de otro personaje); gs: remata hacia abajo sin saltar
+    // si el balón le pasa por encima de la cabeza; sw: anchura del dibujo (1 = normal)
+    { id: 'lukas', name: 'Lukas', role: 'Gigante', h: 136, vel: 2, sal: 5.4, pot: 4, tec: 3, gs: true, sw: 0.72, ak: 'muro', secret: true,
+      ab: { name: 'Torre', desc: 'Levanta un muro sobre la red durante 2,5 s que devuelve los ataques rivales. Además, remata por encima de la red sin saltar.', cd: 12 } },
+    { id: 'oscar', name: 'Oscar', role: 'Cohete', h: 58, vel: 4, sal: 7, pot: 6, tec: 3, sw: 1.12, ak: 'brasa', secret: true,
+      ab: { name: 'Cañonazo', desc: 'Su próximo remate o saque potente sale un 35 % más rápido y desvía mucho más a quien lo recibe. Es bajito, pero es el que más salta y el que más fuerte remata.', cd: 10 } },
   ];
+  const abOf = ch => ch.ak || ch.id; // habilidad del personaje
 
   const DIFF = {
     facil:   { react: 0.36, sr: [0.34, 0.6],  posErr: 30, speed: 0.86, powerServe: 0.15, smart: 0.15, abil: 0.4, dive: 0.3, th: 2.2 },
@@ -884,7 +907,7 @@ const VB = (() => {
     nube:   { atk2: 0.9, react: 0.88, err: 0.7 },
     ciclon: { flat: 15, serve: 0.1 },
   };
-  const styleOf = p => STYLE[p.ch.id] || {};
+  const styleOf = p => STYLE[p.ch.id] || STYLE[abOf(p.ch)] || {};
 
   function rng(seed) {
     let a = seed >>> 0;
@@ -1072,7 +1095,11 @@ const VB = (() => {
     }
     if (ax < -0.33) return { vx: d * 250 + 0.2 * p.vx, vy: -300 }; // dejada
     const over = clamp((p.y - h - b.y + 10) / 50, 0, 1);
-    const a = (10 + 20 * over + (down ? 16 : 0) - (ax > 0.33 ? 6 : 0)) * RAD;
+    let a = (10 + 20 * over + (down ? 16 : 0) - (ax > 0.33 ? 6 : 0)) * RAD;
+    if (ch.gs && p.onGround) { // gigante rematando de pie: hacia abajo, pero lo justo para que pase por encima de la red
+      const dx = Math.abs(NETX - b.x), clear = NET_TOP - BALL_R - 10 - b.y; // cuánto más alto que la red (con margen) está el balón
+      a = Math.min(a, Math.max(-8 * RAD, Math.atan2(clear, Math.max(30, dx)) - 2 * RAD));
+    }
     return { vx: d * S * Math.cos(a) + 0.3 * p.vx, vy: S * Math.sin(a) };
   }
 
@@ -1154,7 +1181,7 @@ const VB = (() => {
   /* ---------- Habilidades ---------- */
   function useAbility(g, p) {
     if (p.cd > 0 || g.state === 'point' || g.state === 'over') return false;
-    const id = p.ch.id, d = dirOf(p.team);
+    const id = abOf(p.ch), d = dirOf(p.team);
     if (id === 'brasa') p.buff.fire = 6;
     else if (id === 'gancho') p.buff.curve = 6;
     else {
@@ -1189,7 +1216,7 @@ const VB = (() => {
     }
     p.cd = p.ch.ab.cd;
     if (g.net) g.net.abOut.push(p.i);
-    emit(g, { type: 'ability', id, team: p.team, player: p.i, x: p.x, y: p.y - p.ch.h });
+    emit(g, { type: 'ability', id, cid: p.ch.id, team: p.team, player: p.i, x: p.x, y: p.y - p.ch.h });
     return true;
   }
 
@@ -1254,7 +1281,7 @@ const VB = (() => {
       if (type) {
         const aimRaw = inp.aim != null ? inp.aim : inp.x;
         p.swing = { type, t: 0, dur: 0.16, ax: clamp((aimRaw || 0) * dirOf(p.team), -1, 1), down: !!inp.down };
-        p.swingCd = 0.36; p.anim.swingT = g.time; p.anim.swingType = type === 'spike' && wasGround ? 'drive' : type;
+        p.swingCd = 0.36; p.anim.swingT = g.time; p.anim.swingType = type === 'spike' && wasGround && !(p.ch.gs && zoneE(p, 'spike', g.ball) >= 0) ? 'drive' : type;
         emit(g, { type: 'swing', kind: type });
       }
     }
@@ -1268,7 +1295,7 @@ const VB = (() => {
       if (p.dive && !p.dive.hit && zoneE(p, 'dig', b) >= 0) { p.dive.hit = true; doHit(g, p, 'dig', 0, false); return; }
       const s = p.swing;
       if (!s) continue;
-      const type = s.type === 'spike' && p.onGround ? 'drive' : s.type;
+      const type = s.type === 'spike' && p.onGround && !(p.ch.gs && zoneE(p, 'spike', b) >= 0) ? 'drive' : s.type; // los gigantes rematan de pie si el balón les pasa por encima
       if (zoneE(p, type, b) >= 0) { p.swing = null; doHit(g, p, type, s.ax, s.down); return; }
     }
   }
@@ -1344,7 +1371,7 @@ const VB = (() => {
     const go = x => { const dx = x - p.x; inp.x = Math.abs(dx) < 3 ? 0 : clamp(dx / 10, -1, 1) * D.speed; B.goalX = x; };
     const press = (btn, c) => { inp[btn] = true; inp.aim = d * c.ax; inp.down = !!c.down && !p.onGround; };
     if (g.state === 'over') return;
-    const id = p.ch.id, ready = p.cd <= 0, h = p.ch.h;
+    const id = abOf(p.ch), ready = p.cd <= 0, h = p.ch.h;
 
     if (g.state === 'serve') {
       if (g.server === p) {
@@ -1681,14 +1708,14 @@ const VB = (() => {
   function netAbility(g, i) {
     const p = g.players[i];
     if (!p || g.state === 'over') return;
-    const id = p.ch.id;
+    const id = abOf(p.ch);
     if (id === 'muro') { g.env.wallTeam = p.team; g.env.wallT = 2.5; g.env.wallOn = false; g.env.wallBy = i; }
     else if (id === 'luna') { g.env.slowTeam = p.team; g.env.slowT = 3; }
     else if (id === 'titan') {
       for (const q of g.players) if (!q.remote && q.team !== p.team && q.onGround) { q.stun = 1.2; q.vx = 0; q.dive = null; }
       emit(g, { type: 'quake', x: p.x, team: p.team });
     }
-    emit(g, { type: 'ability', id, team: p.team, player: i, x: p.x, y: p.y - p.ch.h });
+    emit(g, { type: 'ability', id, cid: p.ch.id, team: p.team, player: i, x: p.x, y: p.y - p.ch.h });
   }
   // Jugador que lleva otro dispositivo: aquí solo se le hace avanzar entre dos avisos suyos
   function puppet(g, p, dt) {
@@ -1746,6 +1773,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     titan:  { skin: '#E0A47A', hair: '#3A2A22', wf: 1.28 },
     nube:   { skin: '#F6D7C3', hair: '#EAF4FF', wf: 0.96 },
     ciclon: { skin: '#A86E4A', hair: '#3EC6E0', wf: 1.04 },
+    lukas:  { skin: '#EDC3A0', hair: '#2E3F9E', wf: 0.86 },
+    oscar:  { skin: '#C98B62', hair: '#E5263F', wf: 1.08 },
   };
   // Aleatorio: se elige como un personaje más y en cada partido te toca uno de los demás al azar (el id 'sombra' se mantiene por compatibilidad online)
   const SOMBRA = { id: 'sombra', name: 'Aleatorio', role: 'Al azar', h: 80, ab: { name: 'Sorpresa', desc: 'Cada partido te toca un personaje distinto al azar, con su habilidad.' } };
@@ -1753,12 +1782,15 @@ if (typeof module !== 'undefined') module.exports = VB;
   const pickOf = id => PICKS.find(c => c.id === id) || CHARS[0];
   // Personajes: cuatro desde el principio y el resto se desbloquean subiendo de nivel (los bots pueden ser cualquiera)
   const CHAR_LVL = { brasa: 1, muro: 1, rayo: 1, luna: 1, gancho: 2, titan: 3, nube: 4, ciclon: 5 };
-  const charOpen = id => id === 'sombra' || !prof || lvlOf(prof.xp).l >= (CHAR_LVL[id] || 1);
-  const realChar = human => { const l = CHARS.filter(c => !human || charOpen(c.id)); return l[Math.floor(Math.random() * l.length)].id; };
+  // Los especiales (secret) solo con código: no salen en ningún sitio hasta desbloquearlos, ni los usan los bots
+  const BASECH = CHARS.filter(c => !c.secret);
+  const isSecret = id => CHARS.some(c => c.id === id && c.secret);
+  const charOpen = id => id === 'sombra' || (isSecret(id) ? !!prof && (prof.unl || []).includes(id) : !prof || lvlOf(prof.xp).l >= (CHAR_LVL[id] || 1));
+  const realChar = human => { const l = human ? CHARS.filter(c => charOpen(c.id)) : BASECH; return l[Math.floor(Math.random() * l.length)].id; };
   // Crea un partido resolviendo a Sombra; rc/sh permiten fijar desde fuera los personajes (los dicta el anfitrión online)
   function makeGame(gc, rc, sh) {
     const shadow = gc.slots.map(() => false); // ya no hay personaje oscuro
-    gc.slots.forEach((s, i) => { s.char = rc && CHARS.some(c => c.id === rc[i]) ? rc[i] : s.char === 'sombra' ? realChar(s.control !== 'bot') : s.control !== 'bot' && !charOpen(s.char) ? 'brasa' : s.char; });
+    gc.slots.forEach((s, i) => { s.char = rc && CHARS.some(c => c.id === rc[i]) ? rc[i] : s.char === 'sombra' ? realChar(s.control !== 'bot') : s.control !== 'bot' && !String(s.control).startsWith('net:') && s.control !== 'remote' && !charOpen(s.char) ? 'brasa' : s.char; });
     const g = VB.createGame(gc);
     g.players.forEach((p, i) => { p.shadow = shadow[i]; });
     return g;
@@ -2219,7 +2251,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         const ch = pickOf(s.char), dark = ch.id === 'sombra';
         const el = document.createElement('article');
         el.className = 'slot';
-        const pips = n => '<i>' + [1, 2, 3, 4, 5].map(k => `<b class="${k <= n ? 'f' : ''}"></b>`).join('') + '</i>';
+        const pips = n => '<i>' + [1, 2, 3, 4, 5].map(k => `<b class="${k <= n ? 'f' : ''}"></b>`).join('') + (n > 5 ? '<span class="plus">+</span>' : '') + '</i>'; // por encima de 5: los especiales
         el.innerHTML = `
           <canvas class="portrait" width="168" height="200" aria-hidden="true"></canvas>
           <div class="pick">
@@ -2236,7 +2268,7 @@ if (typeof module !== 'undefined') module.exports = VB;
           </label>`;
         el.querySelectorAll('.pick button').forEach(b => b.addEventListener('click', () => {
           let k = PICKS.findIndex(c => c.id === s.char);
-          do k = (k + +b.dataset.d + PICKS.length) % PICKS.length; while (s.control !== 'bot' && !charOpen(PICKS[k].id)); // los bloqueados solo para los bots
+          do k = (k + +b.dataset.d + PICKS.length) % PICKS.length; while ((s.control !== 'bot' || PICKS[k].secret) && !charOpen(PICKS[k].id)); // los bloqueados solo para los bots
           s.char = PICKS[k].id;
           saveCfg(); renderSlots(); startDemo();
           const nb = $('#team' + t).querySelector(`#ctl${i}`).closest('.slot').querySelector(`[data-d="${b.dataset.d}"]`);
@@ -2631,7 +2663,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     nube: { at: 'top', dx: -2, rows: ['..kkk...kkk...', '.khhhk.khhhk..', 'khhhhhkhhhhhk.', 'khhhhhhhhhhhhk'] },
     ciclon: { at: 'back', dx: -6, dy: 1, rows: ['kkkkk.....', 'hhhhhkk...', 'kkkkhhhkk.', '...kkkhhhk', '......kkkk'] },
   };
-  const NUM = { brasa: 7, muro: 1, rayo: 3, luna: 5, gancho: 9, titan: 4, nube: 8, ciclon: 2 };
+  const NUM = { brasa: 7, muro: 1, rayo: 3, luna: 5, gancho: 9, titan: 4, nube: 8, ciclon: 2, lukas: 6, oscar: 0 };
   const DIG = ['111101101101111', '010110010010111', '111001111100111', '111001111001111', '101101111001001', '111100111001111', '111100111101111', '111001001001001', '111101111101111', '111101111001111'];
   function stampFrame(o, S0, f, id, hairRgb, cols, kitShirt) {
     const W = S0.w, put = (x, y, rgb, only) => { if (x < 0 || y < 0 || x >= S0.fw || y >= S0.h) return; const p = (y * W + f * S0.fw + x) * 4; if (only && o[p + 3]) return; o[p] = rgb[0]; o[p + 1] = rgb[1]; o[p + 2] = rgb[2]; o[p + 3] = 255; };
@@ -2716,7 +2748,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const id = CHARS.some(q => q.id === o.ch.id) ? o.ch.id : 'brasa';
     const kit = o.kit || 'clasica', v = sprVariant(name, id, o.team, kit, !!o.shadow), S0 = v.S, fr = Math.min(S0.frames - 1, fr0), sq = o.sx || 1;
     const k = o.ch.h / 40.5, ax = name === 'slide' ? S0.midx[fr] : S0.fw / 2, by = S0.foot[fr];
-    c.save(); c.scale(o.face * k * (flip ? -1 : 1) * sq, k);
+    c.save(); c.scale(o.face * k * (flip ? -1 : 1) * sq * (o.ch.sw || 1), k); // sw: personajes más estrechos o más anchos
     const prev = c.imageSmoothingEnabled; c.imageSmoothingEnabled = false;
     if (o.shadow && !qLevel) { c.shadowColor = TEAM[o.team].c; c.shadowBlur = 8; }
     c.drawImage(v.cv, fr * S0.fw, 0, S0.fw, S0.h, -ax, -by + hop, S0.fw, S0.h);
@@ -2926,9 +2958,9 @@ if (typeof module !== 'undefined') module.exports = VB;
         if (r >= 12) pop(480, 150, '¡Peloteo de ' + r + ' toques!', SUN, 28);
       }
       else if (e.type === 'ability') {
-        const ch = CHARS.find(c => c.id === e.id);
+        const ch = CHARS.find(c => c.id === (e.cid || e.id));
         play(e.id === 'titan' ? 'quake' : 'ability');
-        const ap = g.players.find(q => q.ch.id === e.id && Math.abs(q.x - e.x) < 80) || g.players.find(q => q.ch.id === e.id);
+        const cid = e.cid || e.id, ap = g.players.find(q => q.ch.id === cid && Math.abs(q.x - e.x) < 80) || g.players.find(q => q.ch.id === cid);
         abilFx(e, ap);
         if (demo || !ap) pop(e.x, e.y - 34, ch.ab.name, SUN, 22);
         if (!demo && ap) fx.cut = { ch, team: ap.team, kit: ap.kit, t: 0 }; // corte de pantalla con el personaje, como en el anime
@@ -2942,7 +2974,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     g.events.length = 0;
   }
   // Chispas de celebración con el color de cada personaje
-  const CELEB_FX = { brasa: '255,122,26', muro: '90,150,255', rayo: '255,214,40', luna: '185,160,255', gancho: '40,210,140', titan: '216,195,160', nube: '235,245,255', ciclon: '90,215,240' };
+  const CELEB_FX = { lukas: '110,130,255', oscar: '255,60,80', brasa: '255,122,26', muro: '90,150,255', rayo: '255,214,40', luna: '185,160,255', gancho: '40,210,140', titan: '216,195,160', nube: '235,245,255', ciclon: '90,215,240' };
   let celebT = 0;
   function updateFx(dt) {
     shake = Math.max(0, shake - dt);
@@ -3470,7 +3502,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.restore();
   }
   // Aura del jugador que tiene la habilidad cargada, con el color de su personaje
-  const AURA = { brasa: '255,112,20', muro: '70,140,255', rayo: '245,176,0', luna: '160,120,255', gancho: '20,190,120', titan: '235,70,60', nube: '170,205,255', ciclon: '40,190,215' };
+  const AURA = { lukas: '80,100,240', oscar: '240,40,70', brasa: '255,112,20', muro: '70,140,255', rayo: '245,176,0', luna: '160,120,255', gancho: '20,190,120', titan: '235,70,60', nube: '170,205,255', ciclon: '40,190,215' };
   // Habilidad cargada: llamas de energía del color del personaje que envuelven el cuerpo
   const rgbMix = (c, k) => c.split(',').map(v => Math.round(+v + (255 - +v) * k)).join(',');
   const rgbDark = (c, k) => c.split(',').map(v => Math.round(+v * (1 - k))).join(',');
@@ -4225,6 +4257,33 @@ if (typeof module !== 'undefined') module.exports = VB;
       row.append(inv, del); list.append(row);
     }
   }
+  /* ---------- Códigos: desbloquean personajes especiales ---------- */
+  // Se guarda la huella de cada código, no el código, para que no se lea mirando el juego
+  const CODES = { rqbu4a: 'lukas', '19dhg0n': 'oscar' };
+  const codeKey = s => { let x = 2166136261; for (let i = 0; i < s.length; i++) { x ^= s.charCodeAt(i); x = Math.imul(x, 16777619); } return (x >>> 0).toString(36); };
+  function redeem(raw) {
+    const norm = String(raw || '').toUpperCase().normalize('NFD').replace(/[^A-Z0-9]/g, '');
+    if (!norm) return ['Escribe un código.', false];
+    const id = CODES[codeKey('rv:' + norm)], ch = id && CHARS.find(c => c.id === id);
+    if (!ch) return ['Ese código no existe.', false];
+    if (prof.unl.includes(id)) return ['Ya tenías a ' + ch.name + '.', false];
+    prof.unl.push(id); saveProf();
+    if (ac && cfg.sound) sfx.ready();
+    renderSlots && renderSlots();
+    return ['¡Desbloqueado: ' + ch.name + ' (' + ch.role.toLowerCase() + ')! Ya puedes elegirlo.', true];
+  }
+  function renderCodes() {
+    const box = $('#codeList'); box.replaceChildren();
+    const got = CHARS.filter(c => c.secret && prof.unl.includes(c.id));
+    if (!got.length) { const p = document.createElement('p'); p.className = 'fr-empty'; p.textContent = 'Aún no has desbloqueado nada con códigos.'; box.append(p); return; }
+    for (const c of got) {
+      const row = document.createElement('div'); row.className = 'fr-row on';
+      row.innerHTML = '<i class="dot"></i><span class="who"><b></b><small></small></span>';
+      row.querySelector('b').textContent = c.name + ' · ' + c.role; row.querySelector('small').textContent = c.ab.name + ': ' + c.ab.desc;
+      box.append(row);
+    }
+  }
+  function openCodes() { $('#codeMsg').textContent = ''; $('#codeIn').value = ''; $('#codes').hidden = false; renderCodes(); setTimeout(() => $('#codeIn').focus(), 50); }
   function openFriends() { frStart(); $('#friends').hidden = false; renderFriends(); }
 
   /* ---------- Sala fuera de Claude: conexión directa entre navegadores, con un servidor de reserva ---------- */
@@ -4647,7 +4706,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 56; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 57; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -5273,7 +5332,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const mk = (d, label) => {
         const b = document.createElement('button'); b.type = 'button'; b.textContent = d < 0 ? '‹' : '›'; b.setAttribute('aria-label', label); b.dataset.fk = i + ':' + d;
         b.addEventListener('click', () => {
-          let ni = PICKS.indexOf(ch); do ni = (ni + d + PICKS.length) % PICKS.length; while (isMe && !charOpen(PICKS[ni].id));
+          let ni = PICKS.indexOf(ch); do ni = (ni + d + PICKS.length) % PICKS.length; while ((isMe || PICKS[ni].secret) && !charOpen(PICKS[ni].id));
           const next = PICKS[ni].id;
           if (host && isMe) { net.myChar = next; if (s.k === 0) { cfg.slots[0].char = next; saveCfg(); } }
           else if (host) { cfg.slots[s.k].char = next; saveCfg(); }
@@ -5383,7 +5442,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     { id: 'online', t: 'Juega un partido online', n: 1, xp: 80 },
   ];
   let prof = null, run = null, lastCup = null;
-  const blankProf = () => ({ xp: 0, played: 0, won: 0, streak: 0, best: 0, aces: 0, spikes: 0, cups: 0, survBest: 0, chars: {}, court: 'pabellon', kit: 'clasica', cup: 0, daily: null, train: {}, fid: '', friends: [] });
+  const blankProf = () => ({ xp: 0, played: 0, won: 0, streak: 0, best: 0, aces: 0, spikes: 0, cups: 0, survBest: 0, chars: {}, court: 'pabellon', kit: 'clasica', cup: 0, daily: null, train: {}, fid: '', friends: [], unl: [] });
   const needXp = l => 200 + 100 * (l - 1) + 10 * (l - 1) * (l - 1); // cada nivel cuesta bastante más que el anterior
   function lvlOf(xp) { let l = 1; while (xp >= needXp(l)) { xp -= needXp(l); l++; } return { l, into: xp, need: needXp(l) }; }
   const isOpen = it => !!it && (it.cup ? prof.cups > 0 : lvlOf(prof.xp).l >= it.lvl);
@@ -5398,6 +5457,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         if (o.chars && typeof o.chars === 'object') for (const c of CHARS) { const v = o.chars[c.id]; if (v && Number.isFinite(v.p) && Number.isFinite(v.w)) prof.chars[c.id] = { p: v.p | 0, w: v.w | 0 }; }
         prof.court = validCourt(o.court); prof.kit = validKit(o.kit);
         if (typeof o.fid === 'string' && /^[A-Z0-9]{8}$/.test(o.fid)) prof.fid = o.fid;
+        if (Array.isArray(o.unl)) prof.unl = o.unl.filter(id => isSecret(id));
         if (Array.isArray(o.friends)) prof.friends = o.friends.filter(f => f && /^[A-Z0-9]{8}$/.test(f.id)).slice(0, 40).map(f => ({ id: f.id, nick: cleanNick(f.nick) || 'Amigo' }));
         if (o.train && typeof o.train === 'object') for (const d of DRILLS) { const v = o.train[d.id]; if (Array.isArray(v)) prof.train[d.id] = [0, 1, 2].map(i => clamp(v[i] | 0, 0, 10)); }
         const d = o.daily;
@@ -5422,7 +5482,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       if ((id === 'win' && out.includes('win2')) || (id === 'win2' && out.includes('win'))) continue;
       out.push(id);
     }
-    return { day, ch: CHARS[next() % CHARS.length].id, list: out.map(id => ({ id, p: 0, done: false })) };
+    return { day, ch: BASECH[next() % BASECH.length].id, list: out.map(id => ({ id, p: 0, done: false })) };
   }
   function daily() { const d = today(); if (!prof.daily || prof.daily.day !== d) { prof.daily = dailyFor(d); saveProf(); } return prof.daily; }
   const dailyDef = id => DAILY.find(d => d.id === id);
@@ -5519,8 +5579,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     const L = lvlOf(prof.xp), dd = daily();
     $('#pLvl').textContent = L.l; $('#pLvlName').textContent = 'Nivel ' + L.l;
     $('#pXp').textContent = L.into + ' / ' + L.need + ' XP para el nivel ' + (L.l + 1);
-    { const open = CHARS.filter(c => charOpen(c.id)).length, nx = CHARS.filter(c => !charOpen(c.id)).sort((a, b) => CHAR_LVL[a.id] - CHAR_LVL[b.id])[0];
-      $('#pChars').textContent = 'Personajes: ' + open + ' de ' + CHARS.length + (nx ? ' · siguiente: ' + nx.name + ' en el nivel ' + CHAR_LVL[nx.id] : ' · ¡todos!'); }
+    { const open = BASECH.filter(c => charOpen(c.id)).length, nx = BASECH.filter(c => !charOpen(c.id)).sort((a, b) => CHAR_LVL[a.id] - CHAR_LVL[b.id])[0];
+      $('#pChars').textContent = 'Personajes: ' + open + ' de ' + BASECH.length + (nx ? ' · siguiente: ' + nx.name + ' en el nivel ' + CHAR_LVL[nx.id] : ' · ¡todos!'); }
     $('#pBar').style.width = (100 * L.into / L.need).toFixed(1) + '%';
     let fav = null;
     for (const c of CHARS) { const v = prof.chars[c.id]; if (v && (!fav || v.p > fav.v.p)) fav = { c, v }; }
@@ -5575,7 +5635,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       surv.pts++;
       if (surv.pts % 3 === 0) { // rival nuevo
         surv.lvl++;
-        const q = g.players[1], pool = CHARS.filter(c => c.id !== q.ch.id), ch = pool[Math.floor(Math.random() * pool.length)];
+        const q = g.players[1], pool = BASECH.filter(c => c.id !== q.ch.id), ch = pool[Math.floor(Math.random() * pool.length)];
         q.ch = ch; q.cd = ch.ab.cd * 0.5; q.buff.fire = q.buff.curve = q.buff.perfect = q.buff.air = 0;
         g.cfg.difficulty = SURV_DIFF[Math.min(SURV_DIFF.length - 1, surv.lvl)];
         pop(480, 150, 'Nuevo rival: ' + ch.name + ' (' + DIFF_NAME[g.cfg.difficulty] + ')', SUN, 26);
@@ -5872,7 +5932,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       for (const k of ['basic', 'hits', 'chars', 'net']) $('#help-' + k).hidden = k !== b.dataset.v;
       fitMenu();
     });
-    for (const c of CHARS) {
+    for (const c of BASECH) {
       const li = document.createElement('li'), st = document.createElement('strong');
       st.textContent = c.name + ' (' + c.role.toLowerCase() + '): ' + c.ab.name + '. ';
       const ds = document.createElement('span'); ds.className = 'desc'; ds.textContent = c.ab.desc; // en pantallas pequeñas se oculta y queda el nombre de la habilidad
@@ -5941,6 +6001,11 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#frClose').addEventListener('click', () => { $('#friends').hidden = true; });
     $('#frAll').addEventListener('click', frInviteAll);
     $('#lbInvite').addEventListener('click', openFriends);
+    $('#btnCodes').addEventListener('click', openCodes);
+    $('#codeClose').addEventListener('click', () => { $('#codes').hidden = true; });
+    const doRedeem = () => { const [msg, ok] = redeem($('#codeIn').value); $('#codeMsg').textContent = msg; if (ok) { $('#codeIn').value = ''; renderCodes(); toast(msg); } };
+    $('#codeBtn').addEventListener('click', doRedeem);
+    $('#codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') doRedeem(); });
     $('#frAddBtn').addEventListener('click', () => { const e = frAdd($('#frAddCode').value); $('#frMsg').textContent = e || 'Añadido. Cuando abra el juego te aparecerá conectado.'; if (!e) $('#frAddCode').value = ''; });
     $('#frAddCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#frAddBtn').click(); });
     $('#frCopy').addEventListener('click', async () => {
