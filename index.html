@@ -526,6 +526,38 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .fr-row .btn.sent { background: #2FB673; color: #fff; opacity: 1; }
 .fr-all { width: 100%; }
 .stats .plus { margin-left: 2px; font-weight: 800; color: #E89B00; }
+/* Selector de personajes */
+.slot .portrait, .slot .pick h3 { cursor: pointer; }
+.slot .portrait:hover { filter: brightness(1.08); }
+.ch-card { width: min(940px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.ch-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.ch-head h2 { margin: 0; }
+.ch-body { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
+.ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.ch-tile { position: relative; border: 2px solid transparent; border-radius: 12px; background: var(--paper-2); padding: 4px 4px 6px; text-align: center; cursor: pointer; font: inherit; color: var(--ink); }
+.ch-tile canvas { width: 84px; height: 100px; display: block; margin: 0 auto; border-radius: 9px; }
+.ch-tile b { display: block; font-size: 13px; line-height: 1.2; margin-top: 2px; }
+.ch-tile small { display: block; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ch-tile.sel { border-color: #E89B00; box-shadow: 0 0 0 3px rgba(255,200,58,.45); }
+.ch-tile.cur::after { content: 'Ahora'; position: absolute; top: 6px; left: 6px; font-size: 10px; font-weight: 800; background: #2FB673; color: #fff; border-radius: 6px; padding: 1px 5px; }
+.ch-tile.lock canvas { filter: grayscale(1) brightness(.55); }
+.ch-tile.lock small { color: #B4532A; }
+.ch-tile.secret canvas { filter: none; }
+.ch-tile.special b::after { content: ' ★'; color: #E89B00; }
+.ch-detail { background: var(--paper-2); border-radius: 14px; padding: 12px; text-align: center; position: sticky; top: 0; }
+.ch-detail canvas { width: 100%; max-width: 260px; height: auto; aspect-ratio: 300 / 320; border-radius: 12px; }
+.ch-detail h3 { margin: 6px 0 0; font-size: 26px; }
+.ch-role { margin: 0 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.ch-bars { display: grid; gap: 5px; text-align: left; margin-bottom: 8px; }
+.ch-bar { display: grid; grid-template-columns: 70px 1fr 28px; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+.ch-bar i { height: 8px; border-radius: 4px; background: rgba(21,33,63,.12); overflow: hidden; display: block; }
+.ch-bar i b { display: block; height: 100%; border-radius: 4px; background: #2E6BF0; }
+.ch-bar i b.hi { background: #E89B00; }
+.ch-bar em { font-style: normal; text-align: right; color: var(--muted); }
+.ch-ab { text-align: left; font-size: 13px; margin: 0 0 10px; }
+.ch-lock { font-size: 13px; color: #B4532A; font-weight: 700; margin: 0 0 8px; }
+.ch-detail .btn { width: 100%; }
+@media (max-width: 720px) { .ch-body { grid-template-columns: 1fr; } .ch-detail { position: static; order: -1; } .ch-detail canvas { max-width: 160px; } .ch-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); } .ch-tile canvas { width: 70px; height: 84px; } }
 .diag { margin: 12px 0 0; max-height: 34vh; overflow: auto; font: 11px/1.35 ui-monospace, monospace; background: var(--paper-2); color: var(--ink); padding: 8px; border-radius: 8px; white-space: pre-wrap; text-align: left; }
 .fr-del { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 4px 6px; }
 .badge-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 4px; border-radius: 10px; background: #2FB673; color: #fff; font-size: 12px; font-weight: 700; padding: 0 5px; vertical-align: 2px; }
@@ -766,6 +798,24 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <button type="button" class="btn ghost" id="lbLeave">Salir de la sala</button>
         <button type="button" class="btn ghost" id="lbInvite">Invitar amigos</button>
         <button type="button" class="btn" id="lbStart">Empezar partido</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="chooser" class="layer card-layer" hidden aria-label="Elegir personaje">
+    <div class="card ch-card">
+      <div class="ch-head"><h2 id="chTitle">Elige personaje</h2><button type="button" class="btn ghost" id="chClose">Volver</button></div>
+      <div class="ch-body">
+        <div class="ch-grid" id="chGrid" role="listbox" aria-label="Personajes"></div>
+        <div class="ch-detail" id="chDetail">
+          <canvas id="chBig" width="300" height="320" aria-hidden="true"></canvas>
+          <h3 id="chName">—</h3>
+          <p class="ch-role" id="chRole"></p>
+          <div class="ch-bars" id="chBars"></div>
+          <p class="ch-ab" id="chAb"></p>
+          <p class="ch-lock" id="chLock" hidden></p>
+          <button type="button" class="btn" id="chPick">Elegir</button>
+        </div>
       </div>
     </div>
   </section>
@@ -1773,8 +1823,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     titan:  { skin: '#E0A47A', hair: '#3A2A22', wf: 1.28 },
     nube:   { skin: '#F6D7C3', hair: '#EAF4FF', wf: 0.96 },
     ciclon: { skin: '#A86E4A', hair: '#3EC6E0', wf: 1.04 },
-    lukas:  { skin: '#EDC3A0', hair: '#2E3F9E', wf: 0.86 },
-    oscar:  { skin: '#C98B62', hair: '#E5263F', wf: 1.08 },
+    lukas:  { skin: '#F4D2BC', hair: '#6B4A2E', wf: 0.86 }, // sin gorra: pelo largo castaño recogido en un moño, y gafas
+    oscar:  { skin: '#F2CFB8', hair: '#5A3B22', wf: 1.08, suit: ['#9AA1AB', '#7E858F'] }, // sin gorra: pelo corto; chándal gris
   };
   // Aleatorio: se elige como un personaje más y en cada partido te toca uno de los demás al azar (el id 'sombra' se mantiene por compatibilidad online)
   const SOMBRA = { id: 'sombra', name: 'Aleatorio', role: 'Al azar', h: 80, ab: { name: 'Sorpresa', desc: 'Cada partido te toca un personaje distinto al azar, con su habilidad.' } };
@@ -2274,6 +2324,8 @@ if (typeof module !== 'undefined') module.exports = VB;
           const nb = $('#team' + t).querySelector(`#ctl${i}`).closest('.slot').querySelector(`[data-d="${b.dataset.d}"]`);
           if (nb) nb.focus();
         }));
+        el.querySelector('.portrait').addEventListener('click', () => openChooser(i)); // la galería con todos
+        el.querySelector('.pick h3').addEventListener('click', () => openChooser(i));
         el.querySelector('select').addEventListener('change', e => {
           const v = e.target.value;
           if (v !== 'bot') cfg.slots.forEach((o, k) => { if (k !== i && o.control === v) o.control = 'bot'; });
@@ -2287,6 +2339,83 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#goNote').textContent = humans === 0 ? 'Solo bots: siéntate a mirar el partido.'
       : humans === 1 ? 'Un jugador contra los bots.' : humans + ' jugadores humanos en la pista.';
     fitMenu();
+  }
+  /* ---------- Selector de personajes: galería y ficha grande ---------- */
+  const CHS = { slot: -1, sel: '', raf: 0 };
+  const STAT_NAMES = [['vel', 'Velocidad'], ['sal', 'Salto'], ['pot', 'Potencia'], ['tec', 'Técnica']];
+  const heightWord = h => (h >= 120 ? 'muy alto' : h >= 86 ? 'alto' : h >= 74 ? 'media' : h >= 66 ? 'bajo' : 'muy bajo');
+  const chOpenFor = (c, bot) => charOpen(c.id) || (bot && !c.secret); // los bots pueden llevar los de nivel, no los especiales
+  function openChooser(i) {
+    CHS.slot = i; CHS.sel = cfg.slots[i].char;
+    $('#chTitle').textContent = 'Elige personaje · Equipo ' + TEAM[teamOf(i)].name;
+    $('#chooser').hidden = false; renderChooser(); chLoop();
+    setTimeout(() => { const t = $('#chGrid .ch-tile.sel'); if (t) t.focus(); }, 30);
+  }
+  function closeChooser() { $('#chooser').hidden = true; cancelAnimationFrame(CHS.raf); }
+  function renderChooser() {
+    const s = cfg.slots[CHS.slot], bot = s.control === 'bot', team = teamOf(CHS.slot), kit = !bot && prof ? prof.kit : 'clasica';
+    const grid = $('#chGrid'); grid.replaceChildren();
+    for (const c of PICKS) {
+      const open = chOpenFor(c, bot), hidden = c.secret && !charOpen(c.id);
+      const b = document.createElement('button'); b.type = 'button';
+      b.className = 'ch-tile' + (c.id === CHS.sel ? ' sel' : '') + (c.id === s.char ? ' cur' : '') + (open ? '' : ' lock') + (hidden ? ' secret' : '') + (c.secret ? ' special' : '');
+      b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(c.id === CHS.sel)); b.dataset.id = c.id;
+      b.innerHTML = '<canvas width="168" height="200" aria-hidden="true"></canvas><b></b><small></small>';
+      b.querySelector('b').textContent = hidden ? '???' : c.name;
+      b.querySelector('small').textContent = open ? c.role : c.secret ? 'Con código' : 'Nivel ' + (CHAR_LVL[c.id] || 1);
+      b.addEventListener('click', () => { CHS.sel = c.id; renderChooser(); const t = $('#chGrid .ch-tile.sel'); if (t) t.focus(); });
+      b.addEventListener('dblclick', () => { CHS.sel = c.id; chPick(); });
+      grid.append(b);
+      if (hidden) drawPortrait(b.querySelector('canvas'), SOMBRA, team, kit); else drawPortrait(b.querySelector('canvas'), c, team, kit);
+    }
+    const c = pickOf(CHS.sel), open = chOpenFor(c, bot), hidden = c.secret && !charOpen(c.id), dark = c.id === 'sombra';
+    $('#chName').textContent = hidden ? '???' : c.name;
+    $('#chRole').textContent = hidden ? 'Personaje especial' : c.role + (dark ? '' : ' · estatura ' + heightWord(c.h));
+    const bars = $('#chBars'); bars.replaceChildren();
+    if (!hidden) for (const [k, label] of STAT_NAMES) {
+      const v = c[k], row = document.createElement('div'); row.className = 'ch-bar';
+      row.innerHTML = '<span></span><i><b></b></i><em></em>';
+      row.querySelector('span').textContent = label;
+      row.querySelector('em').textContent = dark ? '?' : String(v).replace('.', ',');
+      const fill = row.querySelector('i b'); fill.style.width = dark ? '0%' : Math.min(100, (v / 7) * 100) + '%'; if (v > 5) fill.classList.add('hi');
+      bars.append(row);
+    }
+    const ab = $('#chAb'); ab.replaceChildren();
+    if (hidden) ab.textContent = 'Mete su código en «Códigos» (en el menú) para descubrir quién es.';
+    else { const st = document.createElement('strong'); st.textContent = c.ab.name + '. '; ab.append(st, document.createTextNode(c.ab.desc)); }
+    const lock = $('#chLock');
+    lock.hidden = open || hidden; lock.textContent = open ? '' : c.secret ? 'Se desbloquea con un código.' : 'Se desbloquea al llegar al nivel ' + (CHAR_LVL[c.id] || 1) + '.';
+    $('#chPick').disabled = !open; $('#chPick').textContent = c.id === s.char ? 'Seguir con ' + (hidden ? '???' : c.name) : 'Elegir a ' + (hidden ? '???' : c.name);
+  }
+  function chPick() {
+    const s = cfg.slots[CHS.slot], c = pickOf(CHS.sel);
+    if (!chOpenFor(c, s.control === 'bot')) return;
+    s.char = c.id; saveCfg(); closeChooser(); renderSlots(); startDemo();
+  }
+  // Ficha grande: el personaje a su tamaño real (así se ve quién es alto y quién bajito), de pie, corriendo y rematando
+  function chLoop() {
+    cancelAnimationFrame(CHS.raf);
+    const x = $('#chBig').getContext('2d');
+    const step = () => {
+      if ($('#chooser').hidden) return;
+      const s = cfg.slots[CHS.slot], team = teamOf(CHS.slot), kit = s.control !== 'bot' && prof ? prof.kit : 'clasica', c = pickOf(CHS.sel);
+      const hidden = c.secret && !charOpen(c.id), dark = c.id === 'sombra' || hidden, T = TEAM[team];
+      x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, 300, 320);
+      const g = x.createRadialGradient(150, 190, 10, 150, 190, 170); g.addColorStop(0, T.l); g.addColorStop(1, T.c);
+      x.fillStyle = g; x.fillRect(0, 0, 300, 320);
+      x.fillStyle = 'rgba(21,33,63,.28)'; x.beginPath(); x.ellipse(150, 296, 46, 8, 0, 0, 7); x.fill();
+      if (dark) { x.font = `150px ${FD}`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineWidth = 12; x.strokeStyle = INK; x.strokeText('?', 150, 170); x.fillStyle = SUN; x.fillText('?', 150, 170); }
+      else {
+        const t = (performance.now() / 1000) % 6, k = 1.65;
+        const o = { ch: c, team, face: 1, run: 0, speed: 0, air: false, vy: 0, pose: 'idle', u: 0, k: 0, stun: false, kit };
+        let lift = 0;
+        if (t > 2.2 && t < 3.8) { o.run = t * 9; o.speed = 220; }
+        else if (t >= 3.8 && t < 4.9) { const u = (t - 3.8) / 1.1; o.air = true; o.pose = 'spike'; o.u = u; o.k = 1; o.vy = -300 + 600 * u; lift = Math.sin(u * Math.PI) * 60; }
+        x.save(); x.translate(150, 296 - lift); x.scale(k, k); drawChar(x, o); x.restore();
+      }
+      CHS.raf = requestAnimationFrame(step);
+    };
+    step();
   }
   function drawPortrait(c, ch, team, kit) {
     const dark = ch.id === 'sombra';
@@ -2665,6 +2794,64 @@ if (typeof module !== 'undefined') module.exports = VB;
   };
   const NUM = { brasa: 7, muro: 1, rayo: 3, luna: 5, gancho: 9, titan: 4, nube: 8, ciclon: 2, lukas: 6, oscar: 0 };
   const DIG = ['111101101101111', '010110010010111', '111001111100111', '111001111001111', '101101111001001', '111100111001111', '111100111101111', '111001001001001', '111101111101111', '111101111001111'];
+  // Detalles propios de los personajes especiales, pintados sobre cada fotograma (el dibujo mira a la derecha)
+  const DKP = [21, 21, 29];
+  function headInfo(S0, f) {
+    const W = S0.w, fw = S0.fw, h = S0.h, I = (x, y) => y * W + f * fw + x, H = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < fw; x++) if (S0.cls[I(x, y)] === 4) H.push([x, y]);
+    if (!H.length) return null;
+    const top = Math.min(...H.map(p => p[1])), rows = {};
+    for (const [x, y] of H) if (y < top + 14) (rows[y] = rows[y] || []).push(x);
+    let split = null; // fila donde acaba la copa de la gorra (debajo solo queda pelo de la nuca)
+    for (const y of Object.keys(rows).map(Number).sort((a, b) => a - b)) if (y > top + 1 && rows[y].length <= 3) { split = y; break; }
+    if (split == null) split = top + 4;
+    const K = []; for (let y = top; y < Math.min(h, top + 16); y++) for (let x = 0; x < fw; x++) if (S0.cls[I(x, y)] === 5) K.push([x, y]);
+    return { H, top, split, K, I };
+  }
+  function pxPut(o, S0, f) { const W = S0.w; return (x, y, rgb) => { if (x < 0 || y < 0 || x >= S0.fw || y >= S0.h) return; const p = (y * W + f * S0.fw + x) * 4; o[p] = rgb[0]; o[p + 1] = rgb[1]; o[p + 2] = rgb[2]; o[p + 3] = 255; }; }
+  const pxEmpty = (o, S0, f, x, y) => x < 0 || y < 0 || x >= S0.fw || y >= S0.h || !o[(y * S0.w + f * S0.fw + x) * 4 + 3];
+  const DECOR = {
+    lukas(o, S0, f, L) { // sin gorra: pelo largo recogido en un moño, y gafas
+      const hi = headInfo(S0, f); if (!hi) return;
+      const put = pxPut(o, S0, f), hair = hexRgb(L.hair), { H, split, K } = hi;
+      const capH = H.filter(p => p[1] < split); if (!capH.length) return;
+      const cx0 = Math.min(...capH.map(p => p[0])), cy0 = Math.min(...capH.map(p => p[1]));
+      const bx = cx0 + 1, by = cy0 - 1; // moño arriba y atrás
+      for (const [dx, dy] of [[0, -2], [1, -2], [-1, -1], [0, -1], [1, -1], [2, -1], [-1, 0], [0, 0], [1, 0], [2, 0]]) put(bx + dx, by + dy, hair);
+      for (const [dx, dy] of [[0, -3], [1, -3], [-1, -2], [2, -2], [-2, -1], [3, -1], [-2, 0], [3, 0]]) if (pxEmpty(o, S0, f, bx + dx, by + dy)) put(bx + dx, by + dy, DKP);
+      put(bx, by - 1, [150, 110, 75]); // un brillo en el moño
+      if (!K.length) return;
+      const LENS = [207, 230, 245], ex0 = Math.min(...K.map(p => p[0]));
+      const near = K.filter(p => p[0] <= ex0 + 2), far = K.filter(p => p[0] > ex0 + 3), bb = g => ({ x0: Math.min(...g.map(p => p[0])), x1: Math.max(...g.map(p => p[0])), y0: Math.min(...g.map(p => p[1])), y1: Math.max(...g.map(p => p[1])) });
+      for (const g of [near, far]) {
+        if (!g.length) continue;
+        const b = bb(g);
+        for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0 - 1; x <= b.x1 + 1; x++) if (x >= 0 && x < S0.fw && S0.cls[hi.I(x, y)] === 1) put(x, y, LENS);
+        for (let x = b.x0 - 1; x <= b.x1 + 1; x++) put(x, b.y0 - 1, DKP);
+        if (g === near) put(b.x0 - 1, b.y1, DKP);
+      }
+      if (near.length) {
+        const b = bb(near);
+        for (let x = b.x0 - 4; x < b.x0 - 1; x++) put(x, b.y0 - 1, DKP); // patilla hacia la oreja
+        if (far.length) { const fb = bb(far); for (let x = b.x1 + 2; x < fb.x0 - 1; x++) put(x, b.y0 - 1, DKP); } // puente
+      }
+    },
+    oscar(o, S0, f, L) { // sudadera gris con capucha, manga larga y pantalón largo
+      const hi = headInfo(S0, f), W = S0.w, fw = S0.fw, h = S0.h, I = (x, y) => y * W + f * fw + x, put = pxPut(o, S0, f);
+      const top3 = (() => { for (let y = 0; y < h; y++) for (let x = 0; x < fw; x++) if (S0.cls[I(x, y)] === 3) return y; return -1; })();
+      const top2 = (() => { for (let y = 0; y < h; y++) for (let x = 0; x < fw; x++) if (S0.cls[I(x, y)] === 2) return y; return h; })();
+      if (top3 < 0) return;
+      const shirt = hexRgb(L.suit[0]), pants = hexRgb(L.suit[1]);
+      for (let y = top3; y < top2 - 3; y++) for (let x = 0; x < fw; x++) if (S0.cls[I(x, y)] === 1) put(x, y, shirt); // mangas
+      for (let y = top2; y < h; y++) for (let x = 0; x < fw; x++) if (S0.cls[I(x, y)] === 1) put(x, y, pants); // perneras
+      if (!hi) return;
+      const back = hi.H.filter(p => p[1] >= hi.split && p[1] < hi.split + 6).map(p => p[0]); if (!back.length) return;
+      const hx = Math.min(...back), fill = new Set(), shape = [[-6, [-1]], [-5, [-2, -1]], [-4, [-3, -2, -1]], [-3, [-4, -3, -2, -1]], [-2, [-4, -3, -2, -1]], [-1, [-3, -2, -1]], [0, [-2, -1]]];
+      for (const [dy, xs] of shape) for (const dx of xs) fill.add((hx + dx) + ',' + (top3 + dy));
+      for (const k of fill) { const [x, y] = k.split(',').map(Number); for (const [nx, ny] of [[x - 1, y], [x, y - 1], [x, y + 1]]) if (!fill.has(nx + ',' + ny) && pxEmpty(o, S0, f, nx, ny)) put(nx, ny, DKP); }
+      for (const k of fill) { const [x, y] = k.split(',').map(Number); put(x, y, shirt); } // capucha a la espalda
+    },
+  };
   function stampFrame(o, S0, f, id, hairRgb, cols, kitShirt) {
     const W = S0.w, put = (x, y, rgb, only) => { if (x < 0 || y < 0 || x >= S0.fw || y >= S0.h) return; const p = (y * W + f * S0.fw + x) * 4; if (only && o[p + 3]) return; o[p] = rgb[0]; o[p + 1] = rgb[1]; o[p + 2] = rgb[2]; o[p + 3] = 255; };
     const hb = S0.hairBB[f], st = null;
@@ -2694,7 +2881,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     let v = sprVar.get(k); if (v) return v;
     const S0 = SPR[name], L = LOOK[id] || LOOK.brasa, T = TEAM[team], kc = (KITCOL[kit] || KITCOL.clasica)(T);
     const hair = L.hair; // la gorra, del color de cada personaje
-    const cols = dark ? { 1: '#23232F', 2: '#15151D', 3: '#1B1B26', 4: '#0D0D15', 5: '#2A2A36', 6: '#15151D' } : { 1: L.skin, 2: kc[1], 3: kc[0], 4: hair, 6: T.c };
+    const cols = dark ? { 1: '#23232F', 2: '#15151D', 3: '#1B1B26', 4: '#0D0D15', 5: '#2A2A36', 6: '#15151D' } : { 1: L.skin, 2: L.suit ? L.suit[1] : kc[1], 3: L.suit ? L.suit[0] : kc[0], 4: hair, 6: T.c };
     const rgb = {}; for (const c in cols) rgb[c] = hexRgb(cols[c]);
     const out = document.createElement('canvas'); out.width = S0.w; out.height = S0.h;
     const x = out.getContext('2d'), im = x.createImageData(S0.w, S0.h), o = im.data, d = S0.d;
@@ -2709,8 +2896,8 @@ if (typeof module !== 'undefined') module.exports = VB;
       else { o[p] = d[p]; o[p + 1] = d[p + 1]; o[p + 2] = d[p + 2]; }
     }
     if (!dark) { // peinados y números
-      const numCol = hexRgb(kit === 'oro' || kit === 'neon' ? T.c : '#FBFDFF');
-      for (let f = 0; f < S0.frames; f++) stampFrame(o, S0, f, id, hexRgb(hair), { t: hexRgb(T.c) }, numCol);
+      const numCol = hexRgb(kit === 'oro' || kit === 'neon' || L.suit ? T.c : '#FBFDFF'); // en el chándal gris, el dorsal va del color del equipo
+      for (let f = 0; f < S0.frames; f++) { stampFrame(o, S0, f, id, hexRgb(hair), { t: hexRgb(T.c) }, numCol); if (DECOR[id]) DECOR[id](o, S0, f, L); }
     } else for (let f = 0; f < S0.frames; f++) stampFrame(o, S0, f, id, [13, 13, 21], { t: [21, 21, 29] }, [21, 21, 29]);
     x.putImageData(im, 0, 0);
     v = { cv: out, S: S0 }; sprVar.set(k, v); return v;
@@ -4706,7 +4893,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 57; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 58; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -6002,6 +6189,17 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#frAll').addEventListener('click', frInviteAll);
     $('#lbInvite').addEventListener('click', openFriends);
     $('#btnCodes').addEventListener('click', openCodes);
+    $('#chClose').addEventListener('click', closeChooser);
+    $('#chPick').addEventListener('click', chPick);
+    $('#chooser').addEventListener('keydown', e => { // flechas para moverse por la galería, Intro para elegir, Escape para volver
+      if (e.key === 'Escape') { closeChooser(); e.preventDefault(); return; }
+      if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('ch-tile')) { CHS.sel = e.target.dataset.id; chPick(); e.preventDefault(); return; }
+      const d = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 4, ArrowUp: -4 }[e.key]; if (!d) return;
+      const tiles = [...document.querySelectorAll('#chGrid .ch-tile')], cur = tiles.findIndex(t => t.dataset.id === CHS.sel);
+      const cols = Math.max(1, Math.round($('#chGrid').clientWidth / (tiles[0] ? tiles[0].offsetWidth + 8 : 100)));
+      const n = clamp(cur + (Math.abs(d) === 4 ? Math.sign(d) * cols : d), 0, tiles.length - 1);
+      CHS.sel = tiles[n].dataset.id; renderChooser(); const t = $('#chGrid .ch-tile.sel'); if (t) t.focus(); e.preventDefault();
+    });
     $('#codeClose').addEventListener('click', () => { $('#codes').hidden = true; });
     const doRedeem = () => { const [msg, ok] = redeem($('#codeIn').value); $('#codeMsg').textContent = msg; if (ok) { $('#codeIn').value = ''; renderCodes(); toast(msg); } };
     $('#codeBtn').addEventListener('click', doRedeem);
