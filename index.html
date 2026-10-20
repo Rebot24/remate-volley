@@ -525,6 +525,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .fr-row .btn { padding: 6px 14px; font-size: 15px; } .fr-row .btn:disabled { opacity: .4; }
 .fr-row .btn.sent { background: #2FB673; color: #fff; opacity: 1; }
 .fr-all { width: 100%; }
+.diag { margin: 12px 0 0; max-height: 34vh; overflow: auto; font: 11px/1.35 ui-monospace, monospace; background: var(--paper-2); color: var(--ink); padding: 8px; border-radius: 8px; white-space: pre-wrap; text-align: left; }
 .fr-del { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; padding: 4px 6px; }
 .badge-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 4px; border-radius: 10px; background: #2FB673; color: #fff; font-size: 12px; font-weight: 700; padding: 0 5px; vertical-align: 2px; }
 #toasts { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20; display: grid; gap: 8px; width: min(92vw, 420px); pointer-events: none; }
@@ -808,7 +809,9 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <button type="button" class="btn ghost" id="btnRestart">Reiniciar</button>
         <button type="button" class="btn ghost" id="btnTutSkip" hidden>Saltar paso</button>
         <button type="button" class="btn ghost" id="btnQuit">Menú</button>
+        <button type="button" class="btn ghost" id="btnDiag" hidden>Copiar diagnóstico</button>
       </div>
+      <pre class="diag" id="diagBox" hidden></pre>
       <div class="keys-box kb-only" data-keys></div>
     </div>
   </section>
@@ -1870,6 +1873,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
     $('#btnRestart').hidden = !!net.sala; $('#btnTutSkip').hidden = !tut; if (tut) $('#btnTutSkip').textContent = $('#tutSkip').textContent; $('#btnQuit').textContent = net.sala ? 'Salir de la sala' : 'Menú';
     pauseTitle();
+    const dg = !!net.sala && game.net; $('#btnDiag').hidden = !dg; $('#diagBox').hidden = !(dg && v); if (dg && v) $('#diagBox').textContent = diagText();
     if (v) $('#btnResume').focus(); else lockMouse();
   }
 
@@ -4597,7 +4601,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 51; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 52; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4681,6 +4685,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     });
   }
   function netStartCommon() {
+    Object.assign(DG, { t0: performance.now(), from: {}, fix: 0, fixPx: 0, ft: [], lastTs: 0 }); sync.tx = 0;
     Object.assign(net, { props: [], abs: [], head: null, headR: 0, seenAb: {}, seenPl: {}, sendT: 0, aheadT: 0, stale: 0, resync: 0, lost: {}, stxSent: false, gp: 0, hoWait: 0 });
     syncReset();
     demo = false; paused = false; scene = 'play'; resetFx(); keys.clear(); tapped.clear();
@@ -4805,6 +4810,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     for (const m of box) {
       const d = m.d;
       if (!d || typeof d.q !== 'number' || typeof d.k !== 'string') continue;
+      diagRx(m.from, m.at, d.q);
       if (d.q <= (sync.seen[m.from] || 0)) continue; // repetido o adelantado por otro más nuevo: ya no sirve
       sync.seen[m.from] = d.q; sync.rx++;
       if (d.k === 'h' && net.role === 'g') onSnap(d, m.from, m.at);
@@ -4861,7 +4867,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     let s = typeof T === 'number' ? clamp((simN() - T) / 1000, 0, 0.25) : 0;
     while (s > 1e-4 && c.y + BALL_R < GROUND - 2) { const h = Math.min(VB.STEP, s); VB.stepBall(c, g.env, h, false); s -= h; }
     const b = g.ball, dx = c.x - b.x, dy = c.y - b.y, d = Math.hypot(dx, dy);
-    sync.drift = d;
+    sync.drift = d; if (d >= 2.5) { DG.fix++; DG.fixPx += d; }
     if (d < 2.5) return;
     if ((b.x < VB.NETX) !== (c.x < VB.NETX) && Math.sign(c.x - b.x) === Math.sign(c.vx)) crossNet(g); // la corrección le hace pasar la red
     ballOff.x = clamp(ballOff.x - dx, -160, 160); ballOff.y = clamp(ballOff.y - dy, -160, 160);
@@ -5122,6 +5128,31 @@ if (typeof module !== 'undefined') module.exports = VB;
     } else if (h.t > 32) netLeave('El anfitrión se fue y nadie pudo tomar el mando de la sala.');
   }
 
+  // Diagnóstico del online: lo que de verdad pasa en esta conexión, para copiarlo y enviarlo
+  const DG = { t0: performance.now(), from: {}, fix: 0, fixPx: 0, ft: [], lastTs: 0 };
+  function diagRx(from, at, q) {
+    const f = DG.from[from] || (DG.from[from] = { n: 0, last: 0, gaps: [], q0: q, qMax: q, dup: 0 });
+    f.n++; if (q <= f.qMax) f.dup++; else f.qMax = q;
+    if (f.last) { f.gaps.push(Math.round(at - f.last)); if (f.gaps.length > 600) f.gaps.shift(); }
+    f.last = at;
+  }
+  function diagText() {
+    const pc = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+    const s = net.sala, secs = Math.max(1, (performance.now() - DG.t0) / 1000), ft = DG.ft;
+    const via = !s ? '-' : !s.via ? 'sala de Claude' : s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0) ? 'reserva' + (s.link && s.link() ? ' (' + s.link().replace(/^wss?:\/\//, '').split('/')[0] + ')' : '') : s.via() === 'direct' || net.role === 'h' ? 'directa' : s.via() || '?';
+    const o = {
+      version: VERSION, rol: net.role === 'h' ? 'anfitrion' : 'invitado', camino: via, canalRapido: s && s.fast ? s.fast() : null,
+      ida_vuelta_ms: net.role === 'g' ? Math.round((net.rtt || 0) * 1000) : Object.values(sync.rt).map(v => Math.round(v * 1000)),
+      reloj_muestras: clk.n,
+      recibido: Object.entries(DG.from).map(([k, f]) => ({ de: k.slice(-6), porSeg: +(f.n / secs).toFixed(1), hueco_p50: pc(f.gaps, 0.5), hueco_p95: pc(f.gaps, 0.95), hueco_max: f.gaps.length ? Math.max(...f.gaps) : 0, perdidos_pct: f.qMax > f.q0 ? Math.max(0, Math.round(100 * (1 - (f.n - f.dup) / (f.qMax - f.q0 + 1)))) : 0, repetidos: f.dup })),
+      enviados_porSeg: +(sync.tx / secs).toFixed(1),
+      correcciones_balon_porSeg: +(DG.fix / secs).toFixed(2), correccion_media_px: DG.fix ? Math.round(DG.fixPx / DG.fix) : 0,
+      golpes_rechazados: sync.nrj, resinc: net.resync || 0,
+      fps: Math.round(fpsE), fotograma_p50_ms: pc(ft, 0.5), fotograma_p95_ms: pc(ft, 0.95), fotograma_max_ms: ft.length ? Math.max(...ft) : 0, fotogramas_lentos_50ms: ft.filter(x => x > 50).length,
+      calidad: qLevel, pantalla: innerWidth + 'x' + innerHeight + '@' + (devicePixelRatio || 1), navegador: navigator.userAgent.replace(/\s*\(.*?\)\s*/g, ' ').slice(0, 120), segundos: Math.round(secs),
+    };
+    return JSON.stringify(o, null, 1);
+  }
   function netTick(dt) { if (net.role === 'h') hostTick(dt); else if (net.role === 'g') guestTick(dt); }
   function netSync() { netIn(); if (net.role === 'h') hostSync(); }
   // Después de cada paso: lo mío sale ya si ha pasado algo (golpe, habilidad, cambio de jugada) y, si no, a ritmo fijo
@@ -5578,6 +5609,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     last = ts;
     const t0 = performance.now();
     if (dt > 0) fpsE += (1 / dt - fpsE) * 0.05;
+    if (dt > 0 && scene === 'play') { DG.ft.push(Math.round((ts - (DG.lastTs || ts)) * 10) / 10); DG.lastTs = ts; if (DG.ft.length > 900) DG.ft.shift(); }
     if (dt > 0 && scene === 'play' && !paused && !document.hidden && qLevel < 2) {
       slowT = dt > 0.021 ? slowT + dt : Math.max(0, slowT - dt * 0.5);
       if (slowT > 4) { qLevel++; slowT = 0; resize(); }
@@ -5757,6 +5789,12 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#tutSkip').addEventListener('click', () => { if (!tut) return; if (tut.drill) { drillNext(); return; } if (tut.free) { tut.kind = (tut.kind + 1) % FREE_KINDS.length; paintTut(); return; } if (!TUT[tut.i]) startMatch(); else nextStep(); });
     const quit = () => (net.sala ? netLeave() : toMenu());
     $('#btnQuit').addEventListener('click', quit);
+    $('#btnDiag').addEventListener('click', async () => {
+      const t = diagText(); $('#diagBox').textContent = t; $('#diagBox').hidden = false;
+      let ok = false; try { await navigator.clipboard.writeText(t); ok = true; } catch (e) { /* */ }
+      if (!ok) { const rg = document.createRange(); rg.selectNodeContents($('#diagBox')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rg); try { ok = document.execCommand('copy'); } catch (e) { /* */ } }
+      toast(ok ? 'Diagnóstico copiado: pégalo en el chat.' : 'Selecciona el texto del recuadro y cópialo.');
+    });
     $('#btnAgain').addEventListener('click', () => (net.role === 'h' ? hostStart(true) : net.sala ? null : startMatch(lastCup === 'surv' ? 'surv' : lastCup != null ? prof.cup : undefined, true)));
     $('#btnMenu').addEventListener('click', quit);
     $('#btnLobby').addEventListener('click', hostToLobby);
