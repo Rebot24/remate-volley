@@ -1568,7 +1568,11 @@ const VB = (() => {
   function update(g, dt) {
     g.acc += Math.min(dt, 0.1);
     let n = 0;
-    while (g.acc >= STEP && n < 14) { step(g, STEP); g.acc -= STEP; n++; }
+    while (g.acc >= STEP && n < 14) { // antes de cada paso se guarda dónde estaba todo: para dibujar entre dos pasos sin saltos
+      const b = g.ball; b._px = b.x; b._py = b.y;
+      for (const p of g.players) { p._px = p.x; p._py = p.y; }
+      step(g, STEP); g.acc -= STEP; n++;
+    }
     if (n === 14) g.acc = 0;
   }
 
@@ -2091,7 +2095,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   function gamepads() { try { return navigator.getGamepads ? navigator.getGamepads() : []; } catch (e) { return []; } }
   addEventListener('gamepadconnected', e => { padsSeen.add(e.gamepad.index); if (scene === 'menu') renderSlots(); });
   let startHeld = false;
-  function readInputs() {
+  function readInputs(keepTaps) { // keepTaps: este fotograma no avanza la física; las pulsaciones rápidas se guardan para el siguiente
     let gps = null;
     for (const p of game.players) {
       if (p.isBot) continue;
@@ -2106,7 +2110,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         inp.x = (t.r ? 1 : 0) - (t.l ? 1 : 0);
         inp.jump = !!(t.jump || q.jump); inp.bump = !!(t.bump || q.bump); inp.set = !!(t.set || q.set);
         inp.spike = !!(t.spike || q.spike); inp.ability = !!(t.ability || q.ability); inp.down = !!(t.down || q.down);
-        tapT[dev] = {};
+        if (!keepTaps) tapT[dev] = {};
       } else if (dev.startsWith('net:')) {
         continue; // lo lleva otro dispositivo
       } else if (dev.startsWith('pad')) {
@@ -2122,7 +2126,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         startHeld = st;
       }
     }
-    tapped.clear();
+    if (!keepTaps) tapped.clear();
   }
 
   /* ---------- Controles táctiles ---------- */
@@ -4593,7 +4597,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 50; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 51; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4825,12 +4829,14 @@ if (typeof module !== 'undefined') module.exports = VB;
   function applyPl(g, i, a, T) {
     const p = g.players[i];
     if (!p || !Array.isArray(a)) return;
-    const ro = p._ro || (p._ro = { x: 0, y: 0 }), rx = p.x + ro.x, ry = p.y + ro.y;
     VB.netSetPl(g, i, a, true);
-    const lag = typeof T === 'number' ? clamp((simN() - T) / 1000, 0, 0.25) : 0;
+    const Ts = typeof T === 'number' ? T : simN();
+    const buf = p._buf || (p._buf = []); // muestras con su hora común: se dibujan interpoladas un poco en el pasado (remoteView)
+    if (!buf.length || Ts > buf[buf.length - 1].T) buf.push({ T: Ts, x: p.x, y: p.y, vx: p.vx, vy: p.vy, g: p.onGround });
+    while (buf.length > 2 && buf[1].T < Ts - 1000) buf.shift();
+    const lag = clamp((simN() - Ts) / 1000, 0, 0.25); // el estado de la simulación sí va al presente
     for (let t = 0; t < lag - 1e-4; t += VB.STEP) VB.puppet(g, p, Math.min(VB.STEP, lag - t));
-    const dx = rx - p.x, dy = ry - p.y;
-    if (Math.hypot(dx, dy) < 140) { ro.x = dx; ro.y = dy; } else ro.x = ro.y = 0; // un teletransporte (Destello) no se suaviza
+    p._px = p.x - p.vx * VB.STEP; p._py = p.y - (p.onGround ? 0 : p.vy * VB.STEP);
   }
   // Adelanta el balón el tiempo que tardó en llegar el aviso (sin dibujarlo: la diferencia la absorbe ballOff)
   function crossNet(g) { g.touches = 0; g.lastHitter = null; if (g.serveLive) { g.serveLive = false; g.serveRecv = true; } }
@@ -4974,7 +4980,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     sync.lastSnap = nowL();
     if ((d.pz | 0) !== sync.pz) { sync.pz = d.pz | 0; if (paused) pauseTitle(); }
     const rs = d.rs; sync.lastRs = rs;
-    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); sync.pend = []; ballOff.x = ballOff.y = 0; }
+    if (rs.r !== g.rally) { if (g.rally >= 0 && rs.r < g.rally) net.resync = (net.resync || 0) + 1; VB.netRally(g, rs); sync.pend = []; ballOff.x = ballOff.y = 0; for (const q of g.players) q._buf = null; }
     VB.netRef(g, rs);
     if (Array.isArray(d.ser) && d.ser.length === 2) { series[0] = clamp(d.ser[0] | 0, 0, 999); series[1] = clamp(d.ser[1] | 0, 0, 999); }
     if (d.pl && typeof d.pl === 'object') for (const k in d.pl) { const i = +k, p = g.players[i]; if (p && p.remote) applyPl(g, i, d.pl[k], d.T); }
@@ -5130,6 +5136,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     g.net.out.length = 0; g.net.abOut.length = 0;
     if (host) {
       if (net.gp === 1 && ballStopped(g)) { net.gp = 2; sync.hot = true; pauseTitle(); } // acabó el punto: ahora sí, pausa para todos
+      if (g.rally !== sync.lastR) for (const q of g.players) q._buf = null; // jugada nueva: todos vuelven a su sitio de golpe
       if (g.state !== sync.lastSt || g.rally !== sync.lastR) { sync.lastSt = g.state; sync.lastR = g.rally; sync.hot = true; }
       if (g.state === 'over' && stats.g === g && !net.stxSent) { net.stxSent = true; net.sala.presence({ stx: stats.map(r => r.slice()) }).catch(() => {}); }
     } else if (sync.pend.length && g.bid === sync.pend[sync.pend.length - 1].id && nowN() - (sync.pend[sync.pend.length - 1].T || 0) > 1500 && clk.n) {
@@ -5580,11 +5587,50 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (locked() && !wantLock()) document.exitPointerLock(); // fin del partido, menú, sala…
     const t1 = performance.now();
     const ro = scene === 'play' && !!net.sala && game && game.net;
+    interp(1); // la física va a 120 pasos por segundo; la pantalla puede ir a 60, 75, 144…: se dibuja entre los dos últimos pasos
     if (ro) shiftPl(1); // jugadores de otros: se dibujan con el resto de la corrección todavía por repartir
+    if (window.__rvFrame) window.__rvFrame(ts); // pruebas: posiciones tal como se dibujan
     draw();
     if (ro) shiftPl(-1);
+    interp(-1);
     const t2 = performance.now(); perf.tick += (t1 - t0 - perf.tick) * 0.05; perf.draw += (t2 - t1 - perf.draw) * 0.05;
     requestAnimationFrame(frame);
+  }
+  // Dibujo a un paso de física de distancia, interpolando entre el paso anterior y el actual: el movimiento sale igual de suave
+  // a cualquier frecuencia de pantalla (a 144 Hz, sin esto, uno de cada seis fotogramas repetía la imagen anterior)
+  function interp(sg) {
+    if (!game || !game.players) return;
+    if (sg > 0) {
+      const k = 1 - clamp((game.acc || 0) / VB.STEP, 0, 1), set = o => { const dx = o.x - (o._px ?? o.x), dy = o.y - (o._py ?? o.y), ok = Math.abs(dx) < 40 && Math.abs(dy) < 40; o._ix = ok ? dx * k : 0; o._iy = ok ? dy * k : 0; o.x -= o._ix; o.y -= o._iy; };
+      set(game.ball); for (const p of game.players) { if (p.remote && p._buf) { p._ix = p._iy = 0; continue; } set(p); }
+    } else {
+      const un = o => { o.x += o._ix || 0; o.y += o._iy || 0; o._ix = o._iy = 0; };
+      un(game.ball); for (const p of game.players) un(p);
+    }
+  }
+  // Jugadores de otros: se dibujan VIEW_D ms en el pasado, interpolando entre sus avisos (con su velocidad), así no dan tirones
+  // aunque los avisos lleguen a ráfagas o se pierda alguno; si falta el siguiente aviso, se sigue su trayectoria un momento
+  const VIEW_D = 50;
+  function remoteView(g) {
+    const rT = simN() - VIEW_D;
+    for (const p of g.players) {
+      const ro = p._ro || (p._ro = { x: 0, y: 0 }), b = p._buf;
+      if (!p.remote || !b || !b.length) { ro.x = ro.y = 0; continue; }
+      let j = b.length - 1; while (j > 0 && b[j].T > rT) j--;
+      const s0 = b[j], s1 = b[j + 1];
+      let X, Y;
+      if (s1 && s0.T <= rT) {
+        const dt = (s1.T - s0.T) / 1000, u = clamp((rT - s0.T) / (s1.T - s0.T), 0, 1), u2 = u * u, u3 = u2 * u;
+        const h = (a0, v0, a1, v1) => (2 * u3 - 3 * u2 + 1) * a0 + (u3 - 2 * u2 + u) * dt * v0 + (-2 * u3 + 3 * u2) * a1 + (u3 - u2) * dt * v1;
+        const far = Math.abs(s1.x - s0.x) > 140; // Destello: salto de golpe, sin deslizar
+        X = far ? (u < 0.5 ? s0.x : s1.x) : h(s0.x, s0.vx, s1.x, s1.vx);
+        Y = s0.g && s1.g ? VB.GROUND : far ? (u < 0.5 ? s0.y : s1.y) : Math.min(VB.GROUND, h(s0.y, s0.g ? 0 : s0.vy, s1.y, s1.g ? 0 : s1.vy));
+      } else if (s0.T <= rT) { // aún no ha llegado el siguiente: sigo su trayectoria un poco
+        const e = Math.min(0.12, (rT - s0.T) / 1000);
+        X = s0.x + s0.vx * e; Y = s0.g ? VB.GROUND : Math.min(VB.GROUND, s0.y + s0.vy * e);
+      } else { X = s0.x; Y = s0.y; }
+      ro.x = clamp(X - p.x, -200, 200); ro.y = clamp(Y - p.y, -300, 300);
+    }
   }
   function shiftPl(sg) { for (const p of game.players) if (p._ro) { p.x += sg * p._ro.x; p.y += sg * p._ro.y; } }
   // Un paso de juego sin dibujar (el bucle normal lo dibuja después; en segundo plano no hace falta)
@@ -5593,7 +5639,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       clock += dt;
       if (net.sala) netTick(dt);
       const online = !!net.sala && scene === 'play' && !!game.net;
-      if (!demo) readInputs();
+      if (!demo) readInputs(game.acc + Math.min(dt, 0.1) < VB.STEP); // a más de 120 fps hay fotogramas sin paso de física
       let sdt = dt;
       if (freeze > 0 && !net.sala) { freeze -= dt; sdt = 0; } // pausa de impacto
       if (net.handover || net.reconnect) sdt = 0; // mientras se cambia de anfitrión o me reconecto, el partido espera
@@ -5608,7 +5654,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         netSync(); // lo recibido se aplica sobre el estado ya al día de este fotograma
         const b = game.ball;
         const k = Math.exp(-dt / 0.06); ballOff.x *= k; ballOff.y *= k;
-        const kp = Math.exp(-dt / 0.08); for (const p of game.players) if (p._ro) { p._ro.x *= kp; p._ro.y *= kp; }
+        remoteView(game);
         netPublish(dt);
       } else ballOff.x = ballOff.y = 0;
       handleEvents(); updateFx(dt);
