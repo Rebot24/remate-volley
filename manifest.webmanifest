@@ -1,0 +1,16 @@
+{
+  "name": "Remate Volley",
+  "short_name": "Remate Volley",
+  "description": "Voley 2D en pista cerrada: solo, contra bots o con amigos online.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#15213F",
+  "theme_color": "#15213F",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
