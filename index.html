@@ -4303,7 +4303,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     open();
     return link;
   }
-  function p2pJoin(name, role, keepId) {
+  function p2pJoin(name, role, keepId, ice) {
     return new Promise((resolve, reject) => {
       // name: «rv-abcd» o, tras un relevo de anfitrión, «rv-abcd.2», «.3»…; el servidor de reserva usa siempre el nombre base
       const base = name.replace(/\.\d+$/, ''), gen = +((name.match(/\.(\d+)$/) || [0, 1])[1]);
@@ -4495,7 +4495,9 @@ if (typeof module !== 'undefined') module.exports = VB;
       rebuild();
       if (USE_RELAY) for (const url of RELAYS) links.push(mqttLink(url, topic, onBus));
       if (!USE_DIRECT || !window.Peer) return;
-      try { peer = new window.Peer(me, opts); } catch (e) { directDead = true; return; }
+      const popts = ice && !(opts.config && opts.config.iceServers && opts.config.iceServers.length) ? Object.assign({}, opts, { config: Object.assign({}, opts.config || {}, { iceServers: ice }) }) : opts;
+      try { peer = new window.Peer(me, popts); } catch (e) { directDead = true; return; }
+      room.ice = () => (popts.config && popts.config.iceServers ? popts.config.iceServers.length : 0);
       peer.on('error', e => {
         const t = e && e.type;
         if (done) return; // con la sala ya abierta, un fallo del servidor de encuentro no corta a nadie
@@ -4571,7 +4573,25 @@ if (typeof module !== 'undefined') module.exports = VB;
       });
     });
   }
-  const p2pApi = { join: (name, role, keepId) => loadPeer().catch(() => { if (!USE_RELAY) throw Object.assign(new Error('lib'), { code: 'no_lib' }); }).then(() => p2pJoin(name, role, keepId)) };
+  // Servidor TURN: reenvía la conexión directa cuando la red no la deja pasar (datos móviles, wifis que aíslan a los dispositivos).
+  // TURN_CFG admite una dirección que devuelve la lista de servidores (Metered: https://APP.metered.live/api/v1/turn/credentials?apiKey=CLAVE)
+  // o la lista fija [{ urls, username, credential }]. También se puede probar con ?turn=DIRECCION en el enlace.
+  const TURN_CFG = window.RV_TURN || (() => { try { return new URLSearchParams(location.search).get('turn') || ''; } catch (e) { return ''; } })() || '';
+  const ICE_BASE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }];
+  let iceCache = null, iceT = 0;
+  async function iceServers() {
+    if (!TURN_CFG) return null; // sin TURN propio: lo que trae PeerJS
+    if (iceCache && performance.now() - iceT < 10 * 60000) return iceCache;
+    let extra = [];
+    try {
+      if (Array.isArray(TURN_CFG)) extra = TURN_CFG;
+      else if (/^https:\/\//.test(TURN_CFG)) { const res = await fetch(TURN_CFG); const j = await res.json(); extra = Array.isArray(j) ? j : Array.isArray(j.iceServers) ? j.iceServers : []; }
+    } catch (e) { extra = []; }
+    extra = extra.filter(s => s && s.urls);
+    iceCache = extra.length ? [...extra, ...ICE_BASE] : null; iceT = performance.now();
+    return iceCache;
+  }
+  const p2pApi = { join: (name, role, keepId) => loadPeer().catch(() => { if (!USE_RELAY) throw Object.assign(new Error('lib'), { code: 'no_lib' }); }).then(() => iceServers()).then(ice => p2pJoin(name, role, keepId, ice)) };
 
   /* ---------- Online ---------- */
   // Cada dispositivo simula su jugador y sus golpes; el anfitrión lleva además los bots y el marcador.
@@ -4601,7 +4621,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 52; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 53; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -4858,6 +4878,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (h.kind !== 'fault' && Array.isArray(h.b)) {
       if (typeof h.T === 'number') ffBall(g, (simN() - h.T) / 1000);
       if (vis) { ballOff.x = clamp(sx - b.x, -160, 160); ballOff.y = clamp(sy - b.y, -160, 160); } else ballOff.x = ballOff.y = 0;
+      if (typeof h.T === 'number') sync.ballTau = clamp((simN() - h.T) / 1000, 0.06, 0.2); // aviso muy tardío (servidor lento): el balón se pone al día más despacio, sin salto brusco
     }
     return true;
   }
@@ -5141,7 +5162,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const s = net.sala, secs = Math.max(1, (performance.now() - DG.t0) / 1000), ft = DG.ft;
     const via = !s ? '-' : !s.via ? 'sala de Claude' : s.via() === 'relay' || (net.role === 'h' && s.relays && s.relays() > 0) ? 'reserva' + (s.link && s.link() ? ' (' + s.link().replace(/^wss?:\/\//, '').split('/')[0] + ')' : '') : s.via() === 'direct' || net.role === 'h' ? 'directa' : s.via() || '?';
     const o = {
-      version: VERSION, rol: net.role === 'h' ? 'anfitrion' : 'invitado', camino: via, canalRapido: s && s.fast ? s.fast() : null,
+      turn: TURN_CFG ? 'sí' : 'no', version: VERSION, rol: net.role === 'h' ? 'anfitrion' : 'invitado', camino: via, canalRapido: s && s.fast ? s.fast() : null,
       ida_vuelta_ms: net.role === 'g' ? Math.round((net.rtt || 0) * 1000) : Object.values(sync.rt).map(v => Math.round(v * 1000)),
       reloj_muestras: clk.n,
       recibido: Object.entries(DG.from).map(([k, f]) => ({ de: k.slice(-6), porSeg: +(f.n / secs).toFixed(1), hueco_p50: pc(f.gaps, 0.5), hueco_p95: pc(f.gaps, 0.95), hueco_max: f.gaps.length ? Math.max(...f.gaps) : 0, perdidos_pct: f.qMax > f.q0 ? Math.max(0, Math.round(100 * (1 - (f.n - f.dup) / (f.qMax - f.q0 + 1)))) : 0, repetidos: f.dup })),
@@ -5174,12 +5195,13 @@ if (typeof module !== 'undefined') module.exports = VB;
       sync.pend = []; net.resync = (net.resync || 0) + 1; // sin respuesta del árbitro: vuelvo a lo último que dijo
       if (sync.lastHd && sync.lastHd.r === g.rally) { g.chain = [sync.lastHd.id]; authHit(g, sync.lastHd); } else if (sync.lastRs) { g.rally = -1; VB.netRally(g, sync.lastRs); }
     }
-    const period = 1 / (net.sala.slow && net.sala.slow() ? Math.min(NET_HZ, 20) : NET_HZ);
+    const claudeRoom = !net.sala.stream; // la sala de Claude junta la presencia y la reparte unas 15 veces por segundo: mandar más solo gasta su cupo
+    const period = 1 / (claudeRoom ? Math.min(NET_HZ, 15) : net.sala.slow && net.sala.slow() ? Math.min(NET_HZ, 20) : NET_HZ);
     sync.sendT -= dt;
     const hot = sync.hot, again = sync.again;
     if (sync.sendT > 0 && !hot && !again) return;
     if (sync.sendT <= 0) sync.sendT = Math.max(sync.sendT + period, period * 0.5);
-    sync.hot = false; sync.again = hot; // lo importante sale dos veces seguidas: si se pierde un paquete, llega el otro sin esperar al siguiente turno
+    sync.hot = false; sync.again = hot && !claudeRoom; // lo importante sale dos veces seguidas: si se pierde un paquete, llega el otro sin esperar al siguiente turno
     netSend(host ? hostSnap(g) : guestMsg(g));
   }
 
@@ -5642,9 +5664,16 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   // Jugadores de otros: se dibujan VIEW_D ms en el pasado, interpolando entre sus avisos (con su velocidad), así no dan tirones
   // aunque los avisos lleguen a ráfagas o se pierda alguno; si falta el siguiente aviso, se sigue su trayectoria un momento
-  const VIEW_D = 50;
+  // Margen con el que se dibuja a los demás: lo justo para tener siempre el aviso siguiente (50 ms en una buena conexión,
+  // más si los avisos llegan espaciados o a trompicones, como por la sala de Claude)
+  let viewD = 50, viewT = 0;
   function remoteView(g) {
-    const rT = simN() - VIEW_D;
+    if ((viewT -= 1) <= 0) {
+      viewT = 30; let need = 50;
+      for (const f of Object.values(DG.from)) { const a = f.gaps.slice(-90).sort((x, y) => x - y); if (a.length > 20) need = Math.max(need, a[Math.floor(a.length * 0.9)] + 15); }
+      viewD += clamp(clamp(need, 50, 220) - viewD, -10, 10);
+    }
+    const rT = simN() - viewD;
     for (const p of g.players) {
       const ro = p._ro || (p._ro = { x: 0, y: 0 }), b = p._buf;
       if (!p.remote || !b || !b.length) { ro.x = ro.y = 0; continue; }
@@ -5685,7 +5714,8 @@ if (typeof module !== 'undefined') module.exports = VB;
       if (online) {
         netSync(); // lo recibido se aplica sobre el estado ya al día de este fotograma
         const b = game.ball;
-        const k = Math.exp(-dt / 0.06); ballOff.x *= k; ballOff.y *= k;
+        const tau = sync.ballTau || 0.06, k = Math.exp(-dt / tau); ballOff.x *= k; ballOff.y *= k;
+        if (Math.abs(ballOff.x) + Math.abs(ballOff.y) < 1) sync.ballTau = 0.06;
         remoteView(game);
         netPublish(dt);
       } else ballOff.x = ballOff.y = 0;
