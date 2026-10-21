@@ -1475,6 +1475,8 @@ const VB = (() => {
     const e = Math.hypot((b.x - z.cx) / z.rx, (b.y - z.cy) / z.ry);
     return e <= 1 ? e : -1;
   }
+  // Remate de pie de los gigantes: solo si el balón le pasa por encima de la cabeza y por encima de la red
+  const gsOk = (p, b) => !!p.ch.gs && b.y < NET_TOP - 4 && zoneE(p, 'spike', b) >= 0;
   const canTouch = (g, p) => g.time - p.lastHitT >= 0.24 && g.time - g.lastHitTime >= 0.08 && !(g.noRepeat && g.lastHitter === p);
 
   // Velocidad de salida: depende del tipo de golpe, de dónde está el balón respecto al cuerpo y de la dirección mantenida.
@@ -1499,9 +1501,10 @@ const VB = (() => {
     if (ax < -0.33) return { vx: d * 250 + 0.2 * p.vx, vy: -300 }; // dejada
     const over = clamp((p.y - h - b.y + 10) / 50, 0, 1);
     let a = (10 + 20 * over + (down ? 16 : 0) - (ax > 0.33 ? 6 : 0)) * RAD;
-    if (ch.gs && p.onGround) { // gigante rematando de pie: hacia abajo, pero lo justo para que pase por encima de la red
-      const dx = Math.abs(NETX - b.x), clear = NET_TOP - BALL_R - 10 - b.y; // cuánto más alto que la red (con margen) está el balón
-      a = Math.min(a, Math.max(-8 * RAD, Math.atan2(clear, Math.max(30, dx)) - 2 * RAD));
+    if (ch.gs && p.onGround) { // gigante rematando de pie: hacia abajo, pero lo justo para que pase por encima de la red (contando con la caída)
+      const vx = d * S * Math.cos(a) + 0.3 * p.vx, dx = Math.max(20, Math.abs(NETX - b.x)), t = dx / Math.max(200, Math.abs(vx));
+      const yNet = NET_TOP - BALL_R - 14, vyMax = (yNet - b.y - 0.5 * G * t * t) / t;
+      return { vx, vy: Math.min(S * Math.sin(a), vyMax) };
     }
     return { vx: d * S * Math.cos(a) + 0.3 * p.vx, vy: S * Math.sin(a) };
   }
@@ -1692,7 +1695,7 @@ const VB = (() => {
       if (type) {
         const aimRaw = inp.aim != null ? inp.aim : inp.x;
         p.swing = { type, t: 0, dur: 0.16, ax: clamp((aimRaw || 0) * dirOf(p.team), -1, 1), down: !!inp.down };
-        p.swingCd = 0.36; p.anim.swingT = g.time; p.anim.swingType = type === 'spike' && wasGround && !(p.ch.gs && zoneE(p, 'spike', g.ball) >= 0) ? 'drive' : type;
+        p.swingCd = 0.36; p.anim.swingT = g.time; p.anim.swingType = type === 'spike' && wasGround && !gsOk(p, g.ball) ? 'drive' : type;
         emit(g, { type: 'swing', kind: type });
       }
     }
@@ -1707,7 +1710,7 @@ const VB = (() => {
       if (p.dive && !p.dive.hit && zoneE(p, 'dig', b) >= 0) { p.dive.hit = true; doHit(g, p, 'dig', 0, false); return; }
       const s = p.swing;
       if (!s) continue;
-      const type = s.type === 'spike' && p.onGround && !(p.ch.gs && zoneE(p, 'spike', b) >= 0) ? 'drive' : s.type; // los gigantes rematan de pie si el balón les pasa por encima
+      const type = s.type === 'spike' && p.onGround && !gsOk(p, b) ? 'drive' : s.type; // los gigantes rematan de pie si el balón les pasa por encima
       if (zoneE(p, type, b) >= 0) { p.swing = null; doHit(g, p, type, s.ax, s.down); return; }
     }
   }
@@ -5347,7 +5350,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 61; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 62; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
