@@ -715,6 +715,20 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
 .btn.pulse { animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { transform: scale(1.06); } }
 @media (max-width: 720px) { .chat.lobby { position: static; width: auto; margin: 0 16px; } }
+
+/* ---------- v61 ---------- */
+.seg.mods { flex-wrap: wrap; }
+.seg.mods button[aria-pressed="true"] { background: var(--sun); color: var(--ink); }
+.seg.mods button:disabled { opacity: .6; cursor: default; }
+input.vol { width: 160px; accent-color: var(--sun); }
+.ach-mini { display: flex; flex-wrap: wrap; gap: 4px; }
+.ach-mini i { width: 14px; height: 14px; border-radius: 4px; background: rgba(255, 255, 255, .14); }
+.ach-mini i.on { background: var(--sun); box-shadow: 0 0 0 1px var(--sun-deep); }
+.ach-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.ach-list li { background: var(--paper-2); border-radius: 12px; padding: 8px 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; opacity: .65; }
+.ach-list li.on { opacity: 1; background: color-mix(in srgb, var(--sun) 25%, var(--paper)); }
+.ach-list b { grid-column: 1; } .ach-list span { grid-column: 1; font-size: 13px; color: var(--muted); } .ach-list small { grid-column: 2; grid-row: 1 / 3; align-self: center; font-weight: 700; }
+.menu[data-d="3"] .ach-mini { display: none; }
 </style>
 </head>
 <body>
@@ -799,6 +813,9 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
               <button type="button" data-v="t180">3 min</button>
             </div>
           </div>
+          <div class="field"><span class="eyebrow">Reglas locas</span>
+            <div class="seg mods" id="segMods"></div>
+          </div>
           <div class="field"><span class="eyebrow">Nivel de los bots</span>
             <div class="seg" id="segDiff">
               <button type="button" data-v="facil">Fácil</button>
@@ -862,6 +879,11 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
             <div class="st-grid" id="stGrid"></div>
             <div class="cup-go"><p id="stNote"></p><button type="button" class="btn ghost" id="btnStats">Ver todo</button></div>
           </section>
+          <section class="pcard p-ach" aria-label="Logros">
+            <h3>Logros <small id="achSmall"></small></h3>
+            <div class="ach-mini" id="achMini"></div>
+            <div class="cup-go"><p id="achNote"></p><button type="button" class="btn ghost" id="btnAch">Ver logros</button></div>
+          </section>
           <section class="pcard p-daily" aria-label="Retos de hoy">
             <h3>Retos de hoy <small id="pDailyDay"></small></h3>
             <ul class="daily" id="pDaily"></ul>
@@ -912,6 +934,8 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <div class="audio-row">
           <div class="field"><span class="eyebrow">Efectos</span><div class="seg" id="segSound"><button type="button" data-v="1">Sí</button><button type="button" data-v="0">No</button></div></div>
           <div class="field"><span class="eyebrow">Música</span><div class="seg" id="segMusic"><button type="button" data-v="1">Sí</button><button type="button" data-v="0">No</button></div></div>
+          <div class="field"><label class="eyebrow" for="volIn">Volumen</label><input type="range" id="volIn" min="0" max="100" step="5" class="vol"></div>
+          <div class="field"><span class="eyebrow">Temblor de pantalla</span><div class="seg" id="segShake"><button type="button" data-v="1">Sí</button><button type="button" data-v="0">No</button></div></div>
         </div>
         <div class="touch-only">
           <ul>
@@ -998,6 +1022,9 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         </div>
         <div class="field"><span class="eyebrow">Partido a</span>
           <div class="seg" id="lbPoints"><button type="button" data-v="7">7</button><button type="button" data-v="11">11</button><button type="button" data-v="15">15</button><button type="button" data-v="t180">3 min</button></div>
+        </div>
+        <div class="field"><span class="eyebrow">Reglas locas</span>
+          <div class="seg mods" id="lbMods"></div>
         </div>
         <div class="field"><span class="eyebrow">Nivel de los bots</span>
           <div class="seg" id="lbDiff"><button type="button" data-v="facil">Fácil</button><button type="button" data-v="normal">Normal</button><button type="button" data-v="dificil">Difícil</button></div>
@@ -1118,6 +1145,14 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
     </div>
   </section>
 
+  <section id="achL" class="layer card-layer" hidden aria-label="Logros">
+    <div class="card wide-card">
+      <div class="ch-head"><h2>Logros</h2><button type="button" class="btn ghost" id="achClose">Volver</button></div>
+      <p class="fr-note" id="achIntro"></p>
+      <ul class="ach-list" id="achList"></ul>
+    </div>
+  </section>
+
   <section id="statsL" class="layer card-layer" hidden aria-label="Estadísticas">
     <div class="card wide-card">
       <div class="ch-head"><h2>Estadísticas</h2><button type="button" class="btn ghost" id="stClose">Volver</button></div>
@@ -1206,6 +1241,10 @@ const VB = (() => {
       ab: { name: 'Doble salto', desc: 'Durante 5 s puede volver a saltar en el aire una vez por salto.', cd: 8 } },
     { id: 'ciclon', name: 'Nowaki', role: 'Tormenta', h: 80, vel: 3, sal: 4, pot: 4, tec: 3,
       ab: { name: 'Ráfaga', desc: 'Un golpe de viento: en su campo levanta el balón hacia el rival; en el campo rival lo aplasta contra el suelo.', cd: 13 } },
+    { id: 'guarda', name: 'Mamoru', role: 'Guardián', h: 84, vel: 3, sal: 3.5, pot: 3, tec: 4.5,
+      ab: { name: 'Red de seguridad', desc: 'Durante 4 s, el primer balón del rival que vaya a tocar el suelo de su campo rebota hacia arriba (no cuenta como toque).', cd: 14 } },
+    { id: 'plomo', name: 'Shizuka', role: 'Hechicera', h: 74, vel: 3.5, sal: 4, pot: 3.5, tec: 4,
+      ab: { name: 'Bola de plomo', desc: 'Durante 3 s los golpes del equipo rival salen un 20 % más flojos.', cd: 12 } },
     // Personajes especiales: solo con código. ak: qué habilidad usa (la de otro personaje); gs: remata hacia abajo sin saltar
     // si el balón le pasa por encima de la cabeza; sw: anchura del dibujo (1 = normal)
     { id: 'lukas', name: 'Lukas', role: 'Gigante', h: 136, vel: 2.6, sal: 5.4, pot: 5.5, tec: 3, gs: true, reach: 1.2, sw: 0.72, ak: 'tapon', secret: true,
@@ -1236,6 +1275,8 @@ const VB = (() => {
     nube:   { atk2: 0.9, react: 0.88, err: 0.7 },
     ciclon: { flat: 15, serve: 0.1 },
     lukas:  { home: -25, down: 20, abil: 0.2 },
+    guarda: { dive: 0.1 },
+    plomo:  { atk2: 0.7, err: 0.8 },
     oscar:  { serve: 0.1, atk2: 0.8, down: 25 },
   };
   const styleOf = p => STYLE[p.ch.id] || STYLE[abOf(p.ch)] || {};
@@ -1292,7 +1333,9 @@ const VB = (() => {
       maxTouches: cfg.rules === 'volley' ? 3 : 4, noRepeat: cfg.mode === 2, // por parejas nadie toca dos veces seguidas
       clock: cfg.timeLimit || 0, timed: !!cfg.timeLimit,
       ball: { x: 0, y: 0, vx: 0, vy: 0, rot: 0, held: true, hidden: false, fire: false, curve: 0, curveOn: false, dead: false },
-      env: { slowTeam: -1, slowT: 0, wallTeam: -1, wallT: 0 },
+      env: { slowTeam: -1, slowT: 0, wallTeam: -1, wallT: 0, safeTeam: -1, safeT: 0, heavyTeam: -1, heavyT: 0,
+        gk: cfg.mods && cfg.mods.includes('luna') ? 0.6 : 1, bs: cfg.mods && cfg.mods.includes('rapido') ? 1.25 : 1 },
+      mods: Array.isArray(cfg.mods) ? cfg.mods : [],
       state: 'serve', stateT: 0, touches: 0, lastHitter: null, lastTeam: -1, lastHitTime: -9, hitSeq: 0,
       events: [], serveTeam: cfg.firstServe || 0, serveRot: [0, 0], server: null, pred: null,
       desig: [null, null], atkD: [245, 245], atkSeq: -1, rallyHits: 0, lastKind: '', lastPoint: null, winner: -1,
@@ -1333,7 +1376,7 @@ const VB = (() => {
 
   function setupServe(g) {
     g.state = 'serve'; g.stateT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = -1; g.toss = null;
-    g.env.slowT = 0; g.env.wallT = 0; g.rallyHits = 0; g.pred = null;
+    g.env.slowT = 0; g.env.wallT = 0; g.env.safeT = 0; g.env.heavyT = 0; g.rallyHits = 0; g.pred = null;
     g.rally = (g.rally || 0) + 1; g.bid = 'r' + g.rally; g.chain = [g.bid]; g.landed = null;
     g.serveLive = false; g.serveRecv = false; g.lastBy = -1;
     const st = g.serveTeam;
@@ -1371,10 +1414,10 @@ const VB = (() => {
 
   // flags: 1 = cruzó la red, 2 = tocó la red, 4 = rebotó en la muralla, 8 = pared o techo
   function stepBall(b, env, dt, naive) {
-    let ts = 1;
-    if (env.slowT > 0 && sideOf(b.x) === env.slowTeam) ts = 0.42;
+    let ts = env.bs || 1;
+    if (env.slowT > 0 && sideOf(b.x) === env.slowTeam) ts *= 0.42;
     const h = dt * ts, px = b.x;
-    let g = G;
+    let g = G * (env.gk || 1);
     if (b.curveOn && !naive) { g = G * 2.4; b.vx *= Math.exp(-2.0 * h); }
     b.vy += g * h; b.x += b.vx * h; b.y += b.vy * h; b.rot += b.vx * h * 0.02;
     let fl = 0;
@@ -1397,7 +1440,7 @@ const VB = (() => {
   function predict(g, b0, dt, max) {
     b0 = b0 || g.ball; dt = dt || 1 / 90; max = max || 440;
     const b = { x: b0.x, y: b0.y, vx: b0.vx, vy: b0.vy, rot: 0, curve: b0.curve || 0, curveOn: !!b0.curveOn };
-    const env = { slowTeam: g.env.slowTeam, slowT: g.env.slowT, wallTeam: g.env.wallTeam, wallT: g.env.wallT, wallOn: g.env.wallOn };
+    const env = { slowTeam: g.env.slowTeam, slowT: g.env.slowT, wallTeam: g.env.wallTeam, wallT: g.env.wallT, wallOn: g.env.wallOn, gk: g.env.gk, bs: g.env.bs };
     const S = [];
     let t = 0, net = false, cross = 0;
     for (let i = 0; i < max; i++) {
@@ -1486,6 +1529,7 @@ const VB = (() => {
     if (type === 'bump' && p.buff.perfect > 0) p.buff.perfect = 0;
     b.fire = false; b.curve = 0; b.curveOn = false;
     b.vx = v.vx; b.vy = v.vy;
+    if (g.env.heavyT > 0 && g.env.heavyTeam === p.team) { b.vx *= 0.8; b.vy *= 0.8; } // Bola de plomo del rival
     if (attack) {
       if (p.buff.fire > 0) { b.fire = true; p.buff.fire = 0; }
       if (p.buff.curve > 0) { b.curve = d; p.buff.curve = 0; }
@@ -1541,7 +1585,7 @@ const VB = (() => {
 
   /* ---------- Habilidades ---------- */
   function useAbility(g, p) {
-    if (p.cd > 0 || g.state === 'point' || g.state === 'over') return false;
+    if (p.cd > 0 || g.state === 'point' || g.state === 'over' || g.mods.includes('sinhab')) return false;
     const id = abOf(p.ch), d = dirOf(p.team);
     if (id === 'brasa') p.buff.fire = 6;
     else if (id === 'gancho') p.buff.curve = 6;
@@ -1550,6 +1594,8 @@ const VB = (() => {
       if (g.state !== 'rally') return false;
       if (id === 'muro') { g.env.wallTeam = p.team; g.env.wallT = 2.5; g.env.wallOn = true; g.env.wallBy = p.i; }
       else if (id === 'tapon') p.buff.tapon = 4;
+      else if (id === 'guarda') { g.env.safeTeam = p.team; g.env.safeT = 4; }
+      else if (id === 'plomo') { g.env.heavyTeam = 1 - p.team; g.env.heavyT = 3; }
       else if (id === 'luna') { g.env.slowTeam = p.team; g.env.slowT = 3; }
       else if (id === 'rayo') {
         const pr = g.pred || predict(g);
@@ -1628,7 +1674,7 @@ const VB = (() => {
   function updatePlayer(g, p, dt) {
     const inp = p.input, ch = p.ch;
     p.swingCd = Math.max(0, p.swingCd - dt);
-    if (g.state === 'rally') p.cd = Math.max(0, p.cd - dt);
+    if (g.state === 'rally') p.cd = Math.max(0, p.cd - dt * (g.mods.includes('turbo') ? 2 : 1));
     for (const k in p.buff) if (p.buff[k] > 0) p.buff[k] -= dt;
     const can = g.state !== 'over';
     const pressed = k => inp[k] && !p.prev[k];
@@ -1845,7 +1891,7 @@ const VB = (() => {
         const gx = c.x - d * 14 + B.err * 0.5;
         go(gx);
         if (ready && B.roll < D.abil && c.t < tj + 0.3) {
-          if (id === 'brasa' || id === 'gancho' || id === 'nube') inp.ability = true;
+          if (id === 'brasa' || id === 'gancho' || id === 'nube' || id === 'plomo') inp.ability = true;
           if (id === 'titan' && c.t < tj + 0.15 && p.onGround && opps.some(q => q.onGround)) inp.ability = true;
         }
         if (id === 'cohete' && p.onGround) { // Supersalto: lo pide y en cuanto lo tiene salta, que el salto ya va al balón
@@ -1860,7 +1906,7 @@ const VB = (() => {
       go(gx);
       if (plan !== 'set' && reach(c.x) > c.t + 0.03) {
         if (ready && B.roll < D.abil) {
-          if (id === 'rayo' || (id === 'ciclon' && onMy)) inp.ability = true;
+          if (id === 'rayo' || id === 'guarda' || (id === 'ciclon' && onMy)) inp.ability = true;
           else if (id === 'luna' && reach(c.x) < c.t * 2.2 && !b.curve) { inp.ability = true; return; } // a cámara lenta llega andando: sin plancha
         }
         const dx = c.x - p.x;
@@ -1905,12 +1951,14 @@ const VB = (() => {
       if (L.floor && L.side === t) { g.atkSeq = g.hitSeq; g.atkD[t] = g.atkD[t] * 0.7 + Math.abs(L.x - NETX) * 0.3; }
     }
     for (const p of g.players) {
-      if (p.remote) { if (g.state === 'rally') p.cd = Math.max(0, p.cd - dt); puppet(g, p, dt); continue; }
+      if (p.remote) { if (g.state === 'rally') p.cd = Math.max(0, p.cd - dt * (g.mods.includes('turbo') ? 2 : 1)); puppet(g, p, dt); continue; }
       if (p.isBot) botThink(g, p, dt);
       updatePlayer(g, p, dt);
     }
     if (g.env.slowT > 0) g.env.slowT -= dt;
     if (g.env.wallT > 0) g.env.wallT -= dt;
+    if (g.env.safeT > 0) g.env.safeT -= dt;
+    if (g.env.heavyT > 0) g.env.heavyT -= dt;
     const b = g.ball;
     if (ref && g.timed && (g.state === 'serve' || g.state === 'rally') && g.clock > 0) {
       g.clock = Math.max(0, g.clock - dt);
@@ -1959,6 +2007,12 @@ const VB = (() => {
       if (fl & 8) emit(g, { type: 'wall', x: b.x, y: b.y });
       if (fl & 1) { g.touches = 0; g.lastHitter = null; if (g.serveLive) { g.serveLive = false; g.serveRecv = true; } }
       checkHits(g);
+      if (g.state === 'rally' && b.y + BALL_R >= GROUND && g.env.safeT > 0 && g.env.safeTeam === sideOf(b.x) && g.lastTeam !== sideOf(b.x) && !g.serveLive) { // Red de seguridad: rebota
+        const side = sideOf(b.x), d = dirOf(side);
+        b.y = GROUND - BALL_R - 1; b.vy = -560; b.vx = d * 110 + 0.15 * b.vx; b.fire = false; b.curve = 0; b.curveOn = false;
+        g.env.safeT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = side; g.hitSeq++; g.serveRecv = false; g.lastHitTime = g.time;
+        emit(g, { type: 'safe', x: b.x, team: side });
+      }
       if (g.state === 'rally' && b.y + BALL_R >= GROUND) {
         b.y = GROUND - BALL_R;
         const side = sideOf(b.x);
@@ -2042,7 +2096,7 @@ const VB = (() => {
   function netRally(g, rs) {
     g.rally = num(rs.r) | 0; g.bid = 'r' + g.rally; g.chain = [g.bid]; g.landed = null;
     g.state = 'serve'; g.stateT = 0; g.touches = 0; g.lastHitter = null; g.lastTeam = -1; g.rallyHits = 0; g.pred = null; g.toss = null;
-    g.env.slowT = 0; g.env.wallT = 0; g.serveLive = false; g.serveRecv = false; g.lastBy = -1;
+    g.env.slowT = 0; g.env.wallT = 0; g.env.safeT = 0; g.env.heavyT = 0; g.serveLive = false; g.serveRecv = false; g.lastBy = -1;
     g.serveTeam = rs.sv === 1 ? 1 : 0; g.server = g.players[rs.si] || g.players[0];
     const hx = Array.isArray(rs.hx) ? rs.hx : [];
     g.players.forEach((p, i) => {
@@ -2095,6 +2149,8 @@ const VB = (() => {
     if (!p || g.state === 'over') return;
     const id = abOf(p.ch);
     if (id === 'muro') { g.env.wallTeam = p.team; g.env.wallT = 2.5; g.env.wallOn = false; g.env.wallBy = i; }
+    else if (id === 'guarda') { g.env.safeTeam = p.team; g.env.safeT = 4; }
+    else if (id === 'plomo') { g.env.heavyTeam = 1 - p.team; g.env.heavyT = 3; }
     else if (id === 'luna') { g.env.slowTeam = p.team; g.env.slowT = 3; }
     else if (id === 'titan') {
       for (const q of g.players) if (!q.remote && q.team !== p.team && q.onGround) { q.stun = 1.2; q.vx = 0; q.dive = null; }
@@ -2158,6 +2214,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     titan:  { skin: '#E0A47A', hair: '#3A2A22', wf: 1.28 },
     nube:   { skin: '#F6D7C3', hair: '#EAF4FF', wf: 0.96 },
     ciclon: { skin: '#A86E4A', hair: '#3EC6E0', wf: 1.04 },
+    guarda: { skin: '#C68B62', hair: '#2E7D4F', wf: 1.12 },
+    plomo: { skin: '#F1CDB4', hair: '#7A4BC2', wf: 0.92 },
     lukas:  { skin: '#F4D2BC', hair: '#6B4A2E', wf: 0.86 }, // sin gorra: pelo largo castaño recogido en un moño, y gafas
     oscar:  { skin: '#F2CFB8', hair: '#5A3B22', wf: 1.08, suit: ['#9AA1AB', '#7E858F'] }, // sin gorra: pelo corto; chándal gris
   };
@@ -2166,7 +2224,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const PICKS = [...CHARS, SOMBRA];
   const pickOf = id => PICKS.find(c => c.id === id) || CHARS[0];
   // Personajes: cuatro desde el principio y el resto se desbloquean subiendo de nivel (los bots pueden ser cualquiera)
-  const CHAR_LVL = { brasa: 1, muro: 1, rayo: 1, luna: 1, gancho: 2, titan: 3, nube: 4, ciclon: 5 };
+  const CHAR_LVL = { brasa: 1, muro: 1, rayo: 1, luna: 1, gancho: 2, titan: 3, nube: 4, ciclon: 5, guarda: 6, plomo: 8 };
   // Los especiales (secret) solo con código: no salen en ningún sitio hasta desbloquearlos, ni los usan los bots
   const BASECH = CHARS.filter(c => !c.secret);
   const isSecret = id => CHARS.some(c => c.id === id && c.secret);
@@ -2208,6 +2266,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   const coarse = window.matchMedia && matchMedia('(pointer: coarse)').matches;
   const DEVICES = { bot: 'Bot', kb1: 'Teclado A (WASD)', kb2: 'Teclado B (flechas)', touch1: 'Táctil', touch2: 'Táctil 2' };
   let cfg = {
+    mods: [], vol: 0.9, shake: true,
     mode: 1, rules: 'chance', points: 11, difficulty: 'normal', sound: true, music: true, nick: '', kb: null, klab: {},
     slots: [
       { char: 'brasa', control: coarse ? 'touch1' : 'kb1' }, { char: 'luna', control: 'bot' },
@@ -2222,6 +2281,9 @@ if (typeof module !== 'undefined') module.exports = VB;
     if (VB.DIFF[src.difficulty]) cfg.difficulty = src.difficulty;
     if (typeof src.sound === 'boolean') cfg.sound = src.sound;
     if (typeof src.music === 'boolean') cfg.music = src.music;
+    if (Array.isArray(src.mods)) cfg.mods = src.mods.filter(m => MODS.some(x => x.id === m));
+    if (Number.isFinite(src.vol)) cfg.vol = clamp(src.vol, 0, 1);
+    if (typeof src.shake === 'boolean') cfg.shake = src.shake;
     if (typeof src.nick === 'string') cfg.nick = cleanNick(src.nick);
     if (src.klab && typeof src.klab === 'object') for (const k in src.klab) if (typeof src.klab[k] === 'string' && k.length < 24) cfg.klab[k] = src.klab[k].slice(0, 3);
     if (src.kb) { loadKeys(src.kb); cfg.kb = KB; }
@@ -2254,7 +2316,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       mode: cfg.mode, rules: cfg.rules, difficulty: allBots ? 'normal' : cfg.difficulty,
       points: allBots ? 7 : (cfg.points === 't180' ? 0 : cfg.points), timeLimit: !allBots && cfg.points === 't180' ? 180 : 0,
       slots: activeSlots().map(i => ({ team: teamOf(i), char: cfg.slots[i].char, control: allBots ? 'bot' : cfg.slots[i].control })),
-      firstServe: Math.random() < 0.5 ? 0 : 1,
+      firstServe: Math.random() < 0.5 ? 0 : 1, mods: allBots ? [] : cfg.mods.slice(),
     };
   }
   function resetFx() { fx.pops.length = fx.parts.length = fx.streaks.length = fx.rings.length = fx.bursts.length = fx.trail.length = fx.winds.length = fx.abil.length = fx.bolts.length = 0; fx.cut = null; shake = 0; freeze = 0; zoom.k = 0; rallyShown = 0; }
@@ -2343,7 +2405,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const AC = window.AudioContext || window.webkitAudioContext;
       ac = new AC();
       const comp = ac.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; comp.connect(ac.destination);
-      master = ac.createGain(); master.gain.value = 0.9; master.connect(comp);
+      master = ac.createGain(); master.gain.value = cfg.vol; master.connect(comp);
       sfxBus = ac.createGain(); sfxBus.gain.value = cfg.sound ? 0.55 : 0; sfxBus.connect(master);
       ambBus = ac.createGain(); ambBus.gain.value = cfg.sound ? 1 : 0; ambBus.connect(master);
       musBus = ac.createGain(); musBus.gain.value = cfg.music ? 0.2 : 0; musBus.connect(master);
@@ -3139,8 +3201,10 @@ if (typeof module !== 'undefined') module.exports = VB;
     gancho: { at: 'front', dx: -1, rows: ['kkkkkk.', 'hhhhhhk', 'kkkkkk.'] },
     nube: { at: 'top', dx: -2, rows: ['..kkk...kkk...', '.khhhk.khhhk..', 'khhhhhkhhhhhk.', 'khhhhhhhhhhhhk'] },
     ciclon: { at: 'back', dx: -6, dy: 1, rows: ['kkkkk.....', 'hhhhhkk...', 'kkkkhhhkk.', '...kkkhhhk', '......kkkk'] },
+    guarda: { at: 'top', dx: 0, rows: ['.kkkkkkkkkk.', 'khhhhhhhhhhk', 'kwwwwwwwwwwk', 'kkkkkkkkkkkk'] }, // cinta en la frente
+    plomo: { at: 'back', dx: -4, dy: -1, rows: ['.kkkk..', 'khhhhk.', 'khhhhhk', 'khhdhhk', '.khhhhk', '..khhk.', '...kk..'] }, // coleta larga
   };
-  const NUM = { brasa: 7, muro: 1, rayo: 3, luna: 5, gancho: 9, titan: 4, nube: 8, ciclon: 2, lukas: 6, oscar: 0 };
+  const NUM = { brasa: 7, muro: 1, rayo: 3, luna: 5, gancho: 9, titan: 4, nube: 8, ciclon: 2, lukas: 6, oscar: 0, guarda: 2, plomo: 9 };
   const DIG = ['111101101101111', '010110010010111', '111001111100111', '111001111001111', '101101111001001', '111100111001111', '111100111101111', '111001001001001', '111101111101111', '111101111001111'];
   // Detalles propios de los personajes especiales, pintados sobre cada fotograma (el dibujo mira a la derecha)
   const DKP = [21, 21, 29];
@@ -3438,7 +3502,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
   }
   function hitStop(s) { if (!net.sala && !demo) freeze = Math.max(freeze, s); }
-  function punch(x, y, k) { if (demo) return; zoom.k = Math.max(zoom.k, k); zoom.x = x; zoom.y = y; }
+  function punch(x, y, k) { if (demo || !cfg.shake) return; zoom.k = Math.max(zoom.k, k); zoom.x = x; zoom.y = y; }
   function handleEvents() {
     const g = game;
     for (const e of g.events) {
@@ -3472,6 +3536,7 @@ if (typeof module !== 'undefined') module.exports = VB;
         if (e.power) { play('spike', perf || e.fire ? 1 : 0.5); shake = Math.max(shake, perf ? 0.25 : 0.1); hitStop(perf ? 0.08 : e.fire ? 0.06 : 0.03); } else { play(perf ? 'spike' : 'serve', 0.4); if (perf) hitStop(0.05); }
       }
       else if (e.type === 'net') play('net');
+      else if (e.type === 'safe') { pop(e.x, GROUND - 60, '¡Red de seguridad!', '#7CF2B4', 24); play('block'); puff(e.x, GROUND, 14, '#9FF0C4', 220); fx.rings.push({ x: e.x, y: GROUND, t: 0, col: 'rgba(80,220,140,.9)', flat: true }); }
       else if (e.type === 'fault') { pop(e.x, e.y - 26, '¡Falta!', '#FFB1A6', 26); play('shank'); }
       else if (e.type === 'wall') { play('wall'); puff(e.x, e.y, 3, PAPER, 80); ballSq = 0; }
       else if (e.type === 'dive') { play('dive'); puff(e.x, GROUND, 5, '#FBF1DC', 110); }
@@ -3520,7 +3585,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     g.events.length = 0;
   }
   // Chispas de celebración con el color de cada personaje
-  const CELEB_FX = { lukas: '110,130,255', oscar: '255,60,80', tapon: '120,150,255', cohete: '255,90,60', brasa: '255,122,26', muro: '90,150,255', rayo: '255,214,40', luna: '185,160,255', gancho: '40,210,140', titan: '216,195,160', nube: '235,245,255', ciclon: '90,215,240' };
+  const CELEB_FX = { guarda: '80,200,120', plomo: '160,100,230', lukas: '110,130,255', oscar: '255,60,80', tapon: '120,150,255', cohete: '255,90,60', brasa: '255,122,26', muro: '90,150,255', rayo: '255,214,40', luna: '185,160,255', gancho: '40,210,140', titan: '216,195,160', nube: '235,245,255', ciclon: '90,215,240' };
   let celebT = 0;
   function updateFx(dt) {
     shake = Math.max(0, shake - dt);
@@ -3689,7 +3754,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const g = game;
     mainCtx.setTransform(1, 0, 0, 1, 0, 0); mainCtx.clearRect(0, 0, cv.width, cv.height);
     // en el móvil el temblor salta de 2 en 2 píxeles de la pista, como el resto del dibujo
-    const sx = shake > 0 ? (Math.random() - 0.5) * shake * 22 : 0, sy = shake > 0 ? (Math.random() - 0.5) * shake * 16 : 0;
+    const shk = cfg.shake ? shake : 0, sx = shk > 0 ? (Math.random() - 0.5) * shk * 22 : 0, sy = shk > 0 ? (Math.random() - 0.5) * shk * 16 : 0;
     const LA = PIXEL ? lctxA : mainCtx, LB = PIXEL ? lctxB : mainCtx;
     let z = 1, fxp = 480, fyp = 270;
     if (zoom.k > 0) { z = 1 + zoom.k; fxp = lerp(480, zoom.x, 0.6); fyp = lerp(270, zoom.y, 0.6); }
@@ -3713,6 +3778,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       drawShield(a, T);
     }
     drawCracks();
+    drawModEnv(g);
     // Marca de caída y sombras
     if (g.state === 'rally' && g.pred) {
       const L = g.pred.land;
@@ -4054,7 +4120,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     ctx.restore();
   }
   // Aura del jugador que tiene la habilidad cargada, con el color de su personaje
-  const AURA = { lukas: '80,100,240', oscar: '240,40,70', brasa: '255,112,20', muro: '70,140,255', rayo: '245,176,0', luna: '160,120,255', gancho: '20,190,120', titan: '235,70,60', nube: '170,205,255', ciclon: '40,190,215' };
+  const AURA = { guarda: '50,180,100', plomo: '140,80,220', lukas: '80,100,240', oscar: '240,40,70', brasa: '255,112,20', muro: '70,140,255', rayo: '245,176,0', luna: '160,120,255', gancho: '20,190,120', titan: '235,70,60', nube: '170,205,255', ciclon: '40,190,215' };
   // Habilidad cargada: llamas de energía del color del personaje que envuelven el cuerpo
   const rgbMix = (c, k) => c.split(',').map(v => Math.round(+v + (255 - +v) * k)).join(',');
   const rgbDark = (c, k) => c.split(',').map(v => Math.round(+v * (1 - k))).join(',');
@@ -4168,6 +4234,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     }
     else if (id === 'nube') { o.life = 0.85; o.puffs = Array.from({ length: 9 }, (_, i) => ({ a: (i / 9) * Math.PI * 2 + Math.random() * 0.4, r: 9 + Math.random() * 7, v: 50 + Math.random() * 50 })); }
     else if (id === 'ciclon') o.life = 0.7;
+    else if (id === 'guarda') { o.life = 0.8; spark(16, ['#7CF2B4', '#FFFFFF'], 80, 240, 120, 0.4); }
+    else if (id === 'plomo') { o.life = 0.8; spark(18, ['#B18CFF', '#5B2EA6', '#FFFFFF'], 60, 200, 40, 0.45); }
     else if (id === 'tapon') { o.life = 0.7; spark(14, ['#9DB4FF', '#FFFFFF'], 80, 240, 200, 0.35); }
     else if (id === 'cohete') { o.life = 0.6; spark(20, ['#FF5A3C', '#FFD23F', '#FF9A1A'], 100, 300, 60, 0.3); }
     fx.abil.push(o);
@@ -5271,7 +5339,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   };
   const peerOf = id => (id && net.sala ? net.sala.peers().find(q => q.peer === id && !q.sameTab) : null) || null;
   const netStatus = msg => { $('#onlineNote').textContent = msg; };
-  const netCfg = () => ({ mode: cfg.mode, rules: cfg.rules, points: cfg.points === 't180' ? 0 : cfg.points, timeLimit: cfg.points === 't180' ? 180 : 0, difficulty: cfg.difficulty, court: net.court || (prof ? prof.court : 'pabellon') });
+  const netCfg = () => ({ mods: net.tourn ? [] : cfg.mods.slice(), mode: cfg.mode, rules: cfg.rules, points: cfg.points === 't180' ? 0 : cfg.points, timeLimit: cfg.points === 't180' ? 180 : 0, difficulty: cfg.difficulty, court: net.court || (prof ? prof.court : 'pabellon') });
   function netErr(e) {
     const c = e && e.code;
     return c === 'not_permitted' || c === 'not_granted' ? 'Esta vista no puede usar salas online.'
@@ -5279,7 +5347,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 60; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 61; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -5653,7 +5721,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       control: s && s.peer && s.peer === me ? myDevice() : (s && s.peer ? 'remote' : 'bot') }));
     const pts = Number.isFinite(c.points) ? clamp(c.points | 0, 0, 99) : 11, tl = Number.isFinite(c.timeLimit) ? clamp(c.timeLimit | 0, 0, 3600) : 0;
     const fixed = Array.isArray(pr.rc) && pr.rc.length === seats.length; // Sombra: el personaje al azar lo decide el anfitrión
-    game = makeGame({ mode: seats.length === 4 ? 2 : 1, rules: c.rules === 'volley' ? 'volley' : 'chance', points: pts, timeLimit: tl, difficulty: 'normal', slots, seed: 1 },
+    game = makeGame({ mode: seats.length === 4 ? 2 : 1, rules: c.rules === 'volley' ? 'volley' : 'chance', points: pts, timeLimit: tl, difficulty: 'normal', slots, seed: 1, mods: Array.isArray(c.mods) ? c.mods.filter(m => MODS.some(x => x.id === m)) : [] },
       fixed ? pr.rc : null, fixed && Array.isArray(pr.sh) ? pr.sh : null);
     applyKits(game, seats); setCourt(validCourt(c.court));
     net.mid = pr.mid; net.myIdx = seats.findIndex(s => s && s.peer === me);
@@ -5880,6 +5948,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#lbCode').textContent = net.code.toUpperCase();
     $('#lbRules').hidden = !host; $('#lbCfg').hidden = host; $('#lbStart').hidden = !host; $('#lbTourn').hidden = !host;
     $('#lbPubRow').hidden = !(host && net.direct); $('#lbPub').checked = !!net.pub;
+    if (host) renderMods('#lbMods', () => !net.tourn);
     const TT = host ? net.tourn : v && tnUnpack(v.tn);
     renderLobbyTourn(TT);
     $('#lbSeats').hidden = !!TT && TT.champ < 0; $('#lbRules').hidden = !host || (!!TT && TT.champ < 0);
@@ -5892,6 +5961,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const c = v.cfg || {};
       $('#lbCfg').textContent = (v.seats.length === 4 ? '2 contra 2' : '1 contra 1') + ' · ' + (c.rules === 'volley' ? 'Clásico, 3 toques' : 'Libre, 4 toques') + ' · '
         + (c.timeLimit ? 'a 3 minutos' : 'a ' + (Number.isFinite(c.points) ? c.points | 0 : 11) + ' puntos')
+        + (Array.isArray(c.mods) && c.mods.length ? ' · ' + c.mods.map(id => (MODS.find(m => m.id === id) || {}).name).filter(Boolean).join(', ') : '')
         + (net.sala.via && net.sala.via() === 'relay' ? ' · conexión de reserva' : '');
     }
     let humans = 0;
@@ -6029,7 +6099,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   ];
   let prof = null, run = null, lastCup = null;
   const blankProf = () => ({ xp: 0, played: 0, won: 0, streak: 0, best: 0, aces: 0, spikes: 0, cups: 0, survBest: 0, chars: {}, court: 'pabellon', kit: 'clasica', cup: 0, daily: null, train: {}, fid: '', friends: [], unl: [],
-    name: '', coins: 0, own: [], eq: { ball: 'clasico', trail: 'nada', celeb: 'normal' }, st: blankSt(), hist: [], career: null, tourn: null, tcups: 0, rk: 1000, rkN: 0, rkBest: 1000 });
+    name: '', coins: 0, own: [], ach: [], fl: {}, eq: { ball: 'clasico', trail: 'nada', celeb: 'normal' }, st: blankSt(), hist: [], career: null, tourn: null, tcups: 0, rk: 1000, rkN: 0, rkBest: 1000 });
   const needXp = l => 200 + 100 * (l - 1) + 10 * (l - 1) * (l - 1); // cada nivel cuesta bastante más que el anterior
   function lvlOf(xp) { let l = 1; while (xp >= needXp(l)) { xp -= needXp(l); l++; } return { l, into: xp, need: needXp(l) }; }
   const isOpen = it => !!it && (it.shop ? prof.own.includes('kit:' + it.id) : it.cup ? prof.cups > 0 : lvlOf(prof.xp).l >= it.lvl);
@@ -6258,7 +6328,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#btnAgain').hidden = net.role === 'g'; $('#btnLobby').hidden = net.role !== 'h'; $('#btnMenu').textContent = net.sala ? 'Salir de la sala' : 'Menú';
     const cupWas = run && run.g === g ? run.cup : null;
     if (g._mode === 'tourn') tournRecord(g); // el resultado entra en el cuadro (también si eran dos bots)
-    renderEndProg(runEnd(g));
+    renderEndProg(endLines(runEnd(g)));
     $('#btnAgain').textContent = sv ? 'Otra vez' : g._mode === 'career' ? 'Ver la liga' : g._mode === 'tourn' ? 'Ver el cuadro' : cupWas == null ? 'Revancha' : prof.cup === 0 ? 'Empezar otra copa' : 'Siguiente ronda';
     $('#btnEndRp').hidden = !replayHas();
     { const ask = $('#btnAskRv'); ask.hidden = net.role !== 'g' || !!(net.view && net.view.tn); ask.disabled = false; ask.textContent = 'Pedir revancha'; $('#btnAgain').classList.remove('pulse'); }
@@ -6698,6 +6768,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     prof.name = cleanNick(o.name);
     prof.coins = num0(o.coins, 1e7);
     prof.tcups = num0(o.tcups, 9999);
+    prof.ach = Array.isArray(o.ach) ? o.ach.filter(id => ACH.some(a => a[0] === id)) : [];
+    prof.fl = {}; if (o.fl && typeof o.fl === 'object') for (const k of ['clean', 'crazy', 'secret', 'replay', 'chat']) if (o.fl[k]) prof.fl[k] = 1;
     prof.rk = num0(o.rk, 9999) || 1000; prof.rkN = num0(o.rkN); prof.rkBest = num0(o.rkBest, 9999) || 1000;
     if (Array.isArray(o.own)) prof.own = [...new Set(o.own.filter(x => typeof x === 'string' && /^(kit|ball|trail|celeb):[a-z]{2,16}$/.test(x)))];
     if (o.eq && typeof o.eq === 'object') for (const k of ['ball', 'trail', 'celeb']) { const id = validCos(k, o.eq[k]); prof.eq[k] = owns(k, id) ? id : COS_DEF[k]; }
@@ -6721,6 +6793,8 @@ if (typeof module !== 'undefined') module.exports = VB;
     const on = k === 'online' ? cleanNick(labels[opp[0] && opp[0].i] || '') : k === 'carrera' || k === 'torneo' ? cleanNick(labels[opp[0] && opp[0].i] || '') : '';
     prof.hist.unshift({ t: Date.now(), k, m: g.cfg.mode, ch: me.ch.id, op: opp.map(p => p.ch.id), on, s: [my, their], w: won && !r.surv ? 1 : 0 });
     prof.hist.length = Math.min(prof.hist.length, 30);
+    prof.fl = prof.fl || {};
+    if (won && !r.surv) { if (their === 0 && my > 0) prof.fl.clean = 1; if ((g.mods || []).length) prof.fl.crazy = 1; if (me.ch.secret) prof.fl.secret = 1; }
   }
   function modeEnd(g, r, won, my, their) {
     const rk = rankEnd(g, r, won); if (rk) return { xp: 0, coins: 0, lines: [rk] };
@@ -6766,7 +6840,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#stSmall').textContent = st.secs ? Math.round(st.secs / 60) + ' min jugados' : '';
     $('#stNote').textContent = prof.hist.length ? 'Último: ' + histLine(prof.hist[0]) : 'Aún no has jugado ningún partido con esta cuenta.';
     // Modos
-    careerSummary(); tournSummary();
+    careerSummary(); tournSummary(); renderAch();
   }
   const fmtDate = t => { const d = new Date(t); return d.getDate() + '/' + (d.getMonth() + 1); };
   function histLine(h) {
@@ -6891,7 +6965,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   }
   function shopBuy(cat, it) {
     if (prof.coins < it.price) return;
-    prof.coins -= it.price; prof.own.push(cat + ':' + it.id); play('ready');
+    prof.coins -= it.price; prof.own.push(cat + ':' + it.id); play('ready'); achCheck();
     toast('¡' + it.name + ' es tuyo!'); shopEquip(cat, it.id);
   }
 
@@ -6945,7 +7019,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     RP.slowFrom = lastHit >= 0 ? RP.frames[Math.max(0, lastHit - 20)].c - RP.frames[0].c : 1e9;
     resetFx();
     $('#btnRp').hidden = true; keys.clear(); tapped.clear();
-    play('whistle');
+    play('whistle'); achFlag('replay');
   }
   function replayStop(silent) {
     if (!RP.on) { RP.view = null; return; }
@@ -7372,7 +7446,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     addEventListener('appinstalled', () => { $('#btnInstall').hidden = true; instEv = null; toast('Instalado: ya lo tienes como programa. Se actualiza solo.'); });
     $('#btnInstall').addEventListener('click', async () => { if (!instEv) return; instEv.prompt(); try { await instEv.userChoice; } catch (er) { /* */ } instEv = null; $('#btnInstall').hidden = true; });
     stage.addEventListener('pointerdown', () => { if (RP.on) replayStop(); });
-    initOnline();
+    initOnline(); initV61();
   }
 
   /* ===================== Online para PC: chat, reacciones, salas públicas, ranking, revancha ===================== */
@@ -7394,7 +7468,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     text = cleanMsg(text); if (!text || !net.sala) return;
     const now = performance.now(); if (now - CHAT.last < 700) return; CHAT.last = now;
     CHAT.mine.push([++CHAT.seq, text]); if (CHAT.mine.length > 4) CHAT.mine.shift();
-    net.sala.presence({ cm: CHAT.mine.slice() }).catch(() => {});
+    net.sala.presence({ cm: CHAT.mine.slice() }).catch(() => {}); achFlag('chat');
     chatShow(cfg.nick, text, myTeam());
   }
   function emoSend(k) {
@@ -7567,6 +7641,128 @@ if (typeof module !== 'undefined') module.exports = VB;
     $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b && b.dataset.tab === 'online' && net.direct) { pubLinks(); renderPub(); } });
     setInterval(() => { if (!$('#pubBox').hidden && !$('#tab-online').hidden) renderPub(); chatUi(); }, 2000);
     document.addEventListener('fullscreenchange', () => setTimeout(resize, 60));
+  }
+
+  /* ===================== v61: reglas locas, ajustes y logros ===================== */
+  const MODS = [
+    { id: 'luna', name: 'Gravedad baja', d: 'El balón flota y tarda más en caer.' },
+    { id: 'rapido', name: 'Balón rápido', d: 'Todo el balón va un 25 % más deprisa.' },
+    { id: 'turbo', name: 'Habilidades turbo', d: 'Las habilidades se recargan el doble de rápido.' },
+    { id: 'sinhab', name: 'Sin habilidades', d: 'Voley puro: nadie puede usar su habilidad.' },
+  ];
+  function renderMods(id, can) {
+    const box = $(id); if (!box) return; box.replaceChildren();
+    for (const m of MODS) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = m.name; b.title = m.d; b.dataset.v = m.id;
+      b.setAttribute('aria-pressed', String(cfg.mods.includes(m.id)));
+      b.disabled = !can();
+      b.addEventListener('click', () => {
+        if (!can()) return;
+        const i = cfg.mods.indexOf(m.id); if (i >= 0) cfg.mods.splice(i, 1); else cfg.mods.push(m.id);
+        if (m.id === 'turbo' && cfg.mods.includes('sinhab')) cfg.mods.splice(cfg.mods.indexOf('sinhab'), 1);
+        if (m.id === 'sinhab' && cfg.mods.includes('turbo')) cfg.mods.splice(cfg.mods.indexOf('turbo'), 1);
+        saveCfg(); paintMods(); if (net.sala) net.sent = '';
+      });
+      box.append(b);
+    }
+  }
+  function paintMods() { for (const id of ['#segMods', '#lbMods']) { const box = $(id); if (box) box.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(cfg.mods.includes(b.dataset.v)))); } }
+  const modNames = g => (g.mods || []).map(id => (MODS.find(m => m.id === id) || {}).name).filter(Boolean);
+  // En la pista: red de seguridad (verde, a ras de suelo), bola de plomo (morado en el campo rival) y qué reglas locas hay
+  function drawModEnv(g) {
+    const env = g.env;
+    if (env.safeT > 0) {
+      const x0 = env.safeTeam === 0 ? WALL : NETX, x1 = env.safeTeam === 0 ? NETX : W - WALL, a = Math.min(1, env.safeT * 2) * (0.55 + 0.25 * Math.sin(clock * 8));
+      ctx.save(); ctx.strokeStyle = `rgba(80,220,140,${a})`; ctx.lineWidth = 3; ctx.setLineDash([10, 6]); ctx.lineDashOffset = -clock * 40;
+      ctx.beginPath(); ctx.moveTo(x0 + 6, GROUND - 6); ctx.lineTo(x1 - 6, GROUND - 6); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = `rgba(80,220,140,${a * 0.25})`; ctx.fillRect(x0, GROUND - 14, x1 - x0, 14); ctx.restore();
+    }
+    if (env.heavyT > 0) {
+      const x0 = env.heavyTeam === 0 ? WALL : NETX, x1 = env.heavyTeam === 0 ? NETX : W - WALL, a = Math.min(1, env.heavyT * 2);
+      ctx.save(); const gr = ctx.createLinearGradient(0, GROUND, 0, GROUND - 260); gr.addColorStop(0, `rgba(120,60,200,${0.28 * a})`); gr.addColorStop(1, 'rgba(120,60,200,0)');
+      ctx.fillStyle = gr; ctx.fillRect(x0, GROUND - 260, x1 - x0, 260); ctx.restore();
+      for (const p of g.players) if (p.team === env.heavyTeam) { ctx.save(); ctx.globalAlpha = a * 0.8; ctx.fillStyle = '#5B2EA6'; ctx.beginPath(); ctx.ellipse(p.x, p.y - 4, 22, 6, 0, 0, 7); ctx.fill(); ctx.restore(); }
+    }
+    if (g.mods && g.mods.length && !demo) { const t = modNames(g).join(' · '); text(t, 480, GROUND + 40, `700 14px ${FL}`, '#FFE9A0', INK, 3); }
+  }
+
+  // Logros: se miran al acabar cada partido (y al comprar, ver repeticiones o escribir en el chat). Cada uno da monedas.
+  const ACH = [
+    ['debut', 'Primer saque', 'Juega tu primer partido', 50, p => p.played >= 1],
+    ['primera', 'Primera victoria', 'Gana un partido', 50, p => p.won >= 1],
+    ['diez', 'Diez de diez', 'Gana 10 partidos', 100, p => p.won >= 10],
+    ['cincuenta', 'Veterano', 'Gana 50 partidos', 250, p => p.won >= 50],
+    ['cien', 'Leyenda de la pista', 'Gana 100 partidos', 500, p => p.won >= 100],
+    ['racha5', 'En racha', 'Gana 5 partidos seguidos', 150, p => p.best >= 5],
+    ['racha10', 'Imparable', 'Gana 10 partidos seguidos', 400, p => p.best >= 10],
+    ['limpio', 'Partido limpio', 'Gana sin que el rival marque', 150, p => !!p.fl.clean],
+    ['sacador', 'Cañón de saque', 'Consigue 25 saques directos', 150, p => p.aces >= 25],
+    ['rematador', 'Martillo', 'Consigue 250 remates', 200, p => p.spikes >= 250],
+    ['bloqueos', 'Pared humana', 'Bloquea 30 ataques', 150, p => p.st.blocks >= 30],
+    ['planchas', 'Al suelo', 'Salva 100 balones en plancha', 150, p => p.st.digs >= 100],
+    ['peloteo', 'Peloteo eterno', 'Juega un punto de 25 toques o más', 150, p => p.st.bestRally >= 25],
+    ['copa', 'Campeón de copa', 'Gana la Copa Remate', 300, p => p.cups >= 1],
+    ['superv', 'Superviviente', 'Haz 15 puntos en Supervivencia', 200, p => p.survBest >= 15],
+    ['ascenso', 'Ascenso', 'Sube de liga en la carrera', 150, p => !!p.career && p.career.best >= 1],
+    ['pro', 'Profesional', 'Llega a la Liga Pro', 300, p => !!p.career && p.career.best >= 3],
+    ['leyenda', 'Leyenda', 'Gana la Liga de Leyendas', 600, p => !!p.career && p.career.titles >= 1],
+    ['torneo', 'Rey del cuadro', 'Gana un torneo', 250, p => p.tcups >= 1],
+    ['online', 'Conectado', 'Juega 10 partidos online', 200, p => (p.st.modes.online || {}).p >= 10],
+    ['onwin', 'Primera online', 'Gana un partido online', 100, p => (p.st.modes.online || {}).w >= 1],
+    ['ranking', 'Subiendo', 'Llega a 1.100 puntos de ranking', 300, p => (p.rkBest || 0) >= 1100],
+    ['nivel10', 'Nivel 10', 'Llega al nivel 10', 200, p => lvlOf(p.xp).l >= 10],
+    ['nivel20', 'Nivel 20', 'Llega al nivel 20', 500, p => lvlOf(p.xp).l >= 20],
+    ['coleccion', 'Coleccionista', 'Ten 5 cosas de la tienda', 150, p => p.own.length >= 5],
+    ['todos', 'Todoterreno', 'Gana con 8 personajes distintos', 300, p => Object.values(p.chars).filter(v => v.w > 0).length >= 8],
+    ['locura', 'Qué locura', 'Gana con alguna regla loca', 100, p => !!p.fl.crazy],
+    ['secreto', 'Especial', 'Gana con un personaje especial', 100, p => !!p.fl.secret],
+    ['repe', 'Otra vez', 'Mira una repetición', 50, p => !!p.fl.replay],
+    ['charla', 'Buen rollo', 'Escribe en el chat de una sala', 50, p => !!p.fl.chat],
+  ];
+  function achCheck(quiet) {
+    if (!prof) return [];
+    prof.ach = prof.ach || []; prof.fl = prof.fl || {};
+    const out = [];
+    for (const [id, name, , coins, test] of ACH) {
+      if (prof.ach.includes(id)) continue;
+      let ok = false; try { ok = !!test(prof); } catch (e) { ok = false; }
+      if (!ok) continue;
+      prof.ach.push(id); prof.coins += coins; out.push({ t: 'Logro: ' + name + ' (+' + coins + ' monedas)', up: true });
+      if (!quiet) { toast('🏅 Logro: ' + name + ' · +' + coins + ' monedas'); if (ac && cfg.sound) sfx.ready(); }
+    }
+    if (out.length) saveProf();
+    return out;
+  }
+  function achFlag(k) { if (!prof) return; prof.fl = prof.fl || {}; if (prof.fl[k]) return; prof.fl[k] = 1; saveProf(); achCheck(); }
+  function endLines(lines) { const a = achCheck(true); if (a.length && ac && cfg.sound) setTimeout(() => sfx.ready(), 1200); const L = lines || []; return L.slice(0, 1).concat(a, L.slice(1)).slice(0, 8); }
+  function renderAch() {
+    const n = (prof.ach || []).length;
+    $('#achSmall').textContent = n + ' de ' + ACH.length;
+    const mini = $('#achMini'); mini.replaceChildren();
+    for (const [id, name] of ACH) { const i = document.createElement('i'); i.className = (prof.ach || []).includes(id) ? 'on' : ''; i.title = name; mini.append(i); }
+    const next = ACH.find(a => !(prof.ach || []).includes(a[0]));
+    $('#achNote').textContent = next ? 'Siguiente: ' + next[2].toLowerCase() + ' (+' + next[3] + ')' : '¡Los tienes todos!';
+  }
+  function openAch() {
+    const ul = $('#achList'); ul.replaceChildren();
+    $('#achIntro').textContent = (prof.ach || []).length + ' de ' + ACH.length + ' logros. Cada uno da monedas la primera vez.';
+    for (const [id, name, desc, coins] of ACH) {
+      const li = document.createElement('li'), on = (prof.ach || []).includes(id); li.className = on ? 'on' : '';
+      const b = document.createElement('b'), s = document.createElement('span'), c = document.createElement('small');
+      b.textContent = (on ? '🏅 ' : '🔒 ') + name; s.textContent = desc; c.innerHTML = '<span class="coin"></span>' + coins;
+      li.append(b, s, c); ul.append(li);
+    }
+    $('#achL').hidden = false; $('#achClose').focus();
+  }
+  function initV61() {
+    renderMods('#segMods', () => true);
+    renderMods('#lbMods', () => net.role === 'h' && !net.tourn);
+    const vol = $('#volIn'); vol.value = Math.round(cfg.vol * 100);
+    vol.addEventListener('input', () => { cfg.vol = vol.value / 100; if (master) master.gain.value = cfg.vol; saveCfg(); });
+    seg('#segShake', () => (cfg.shake ? '1' : '0'), v => { cfg.shake = v === '1'; });
+    $('#btnAch').addEventListener('click', openAch);
+    $('#achClose').addEventListener('click', () => { $('#achL').hidden = true; });
+    achCheck(true);
   }
   const hot = window.claude && window.claude.hot;
   if (hot && hot.snapshot) hot.snapshot(() => ({ cfg }));
