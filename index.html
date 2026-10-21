@@ -685,6 +685,36 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
   .st-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 400px) { .tabs button { padding: 6px 6px; font-size: 13px; } }
+
+/* ---------- v60: online para PC ---------- */
+.chat { position: absolute; left: 12px; bottom: 12px; z-index: 7; width: min(380px, 60vw); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.chat.lobby { z-index: 7; left: auto; right: 16px; bottom: 90px; width: min(320px, 44vw); background: rgba(21, 33, 63, .55); border-radius: 12px; padding: 8px; }
+.chat ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.chat li { background: rgba(21, 33, 63, .72); color: var(--paper); border-radius: 8px; padding: 3px 8px; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; transition: opacity .6s; align-self: flex-start; max-width: 100%; }
+.chat li.emo { font-style: italic; }
+.chat li.old { opacity: 0; }
+.chat.lobby li { background: transparent; padding: 1px 2px; }
+.chat input { pointer-events: auto; font: 600 14px var(--f-body); color: var(--ink); background: var(--paper); border: 2px solid var(--sun); border-radius: 10px; padding: 6px 9px; }
+.emo-menu { pointer-events: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; background: rgba(21, 33, 63, .9); padding: 6px; border-radius: 12px; }
+.emo-menu button { border: 0; border-radius: 8px; background: var(--paper); color: var(--ink); font: 700 14px var(--f-label); padding: 6px 8px; text-align: left; }
+.emo-menu kbd { font: inherit; color: var(--muted); margin-right: 6px; }
+#stage.touch .emo-menu kbd { display: none; }
+#hud #btnEmo, #hud #btnFull { font-size: calc(var(--hb, 30px) * .5); }
+#stage.touch #hud #btnFull { display: none; }
+.pub { background: rgba(255, 255, 255, .08); border-radius: 14px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; color: #DCE5F7; }
+.pub-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pub h3 { margin: 0; font-family: var(--f-display); font-weight: 400; font-size: 19px; color: var(--paper); }
+.pub-head .btn { font-size: 17px; padding: 8px 16px; }
+.pub-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.pub-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+.pub-list li.empty { color: #AFC0E6; }
+.pub-note { margin: 0; font-size: 13px; color: #AFC0E6; }
+.lb-pub { display: flex; gap: 8px; align-items: center; color: var(--paper); font-size: 14px; cursor: pointer; }
+.lb-pub input { width: 18px; height: 18px; accent-color: var(--sun); }
+.seat-rk { white-space: nowrap; font-family: var(--f-label); font-weight: 700; font-size: 12px; letter-spacing: .04em; color: var(--muted); }
+.btn.pulse { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(1.06); } }
+@media (max-width: 720px) { .chat.lobby { position: static; width: auto; margin: 0 16px; } }
 </style>
 </head>
 <body>
@@ -703,6 +733,11 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <button type="button" id="tutExit">Salir</button>
       </div>
     </div>
+    <div id="chatBox" class="chat" hidden>
+      <ul id="chatLog" aria-live="polite"></ul>
+      <div class="emo-menu" id="emoMenu" hidden></div>
+      <input id="chatIn" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Escribe y pulsa Intro" aria-label="Mensaje para la sala" hidden>
+    </div>
     <div id="padL"></div>
     <div id="padR"></div>
     <div id="hud" hidden>
@@ -710,6 +745,8 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
       <button type="button" id="btnSound" aria-label="Sonido">♪</button>
       <button type="button" id="btnMusic" aria-label="Música">♫</button>
       <button type="button" id="btnRp" class="rp" hidden>Repetición <kbd>X</kbd></button>
+      <button type="button" id="btnEmo" hidden aria-label="Reacciones y chat">💬</button>
+      <button type="button" id="btnFull" aria-label="Pantalla completa">⛶</button>
     </div>
   </div>
 
@@ -855,6 +892,11 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
           <button type="button" class="btn ghost" id="btnJoin" disabled>Unirse</button>
           <p id="onlineNote" aria-live="polite">Comprobando si el online está disponible…</p>
         </div>
+        <div class="pub" id="pubBox" hidden>
+          <div class="pub-head"><h3>Salas abiertas</h3><button type="button" class="btn" id="btnQuick">Partida rápida</button></div>
+          <ul class="pub-list" id="pubList"></ul>
+          <p class="pub-note" id="pubNote">Con «Partida rápida» entras en una sala abierta que espere rival o, si no hay, se crea la tuya y te esperas a que llegue alguien.</p>
+        </div>
         <div class="topic">
           <ul>
             <li>Quien crea la sala recibe un código de 4 letras y se lo pasa a sus amigos.</li>
@@ -902,6 +944,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
             <li>Jugando ganas XP y <strong>monedas</strong>. En la <strong>Tienda</strong> las gastas en equipaciones, balones, estelas y celebraciones.</li>
             <li>En <strong>Perfil</strong> tienes tu nivel, tus estadísticas, los retos de hoy y tus cuentas.</li>
             <li>Después de cada punto puedes ver la <strong>repetición</strong> con el botón de arriba (o la tecla X).</li>
+            <li class="kb-only">Online: <strong>Intro</strong> para escribir en el chat y las teclas <strong>1 a 6</strong> para reacciones rápidas. <strong>F</strong> o el botón ⛶: pantalla completa.</li>
             <li id="helpPc">Para tenerlo como programa en el PC: botón <strong>Instalar en el PC</strong> (con Chrome o Edge) o descarga <a href="RemateVolley.exe" download>RemateVolley.exe</a>. Se actualiza solo: cada vez que lo abres carga la última versión.</li>
             <li>Dibujos de los jugadores: «Beach Volley Asset» de <strong>Eidern</strong> (eidern.itch.io).</li>
           </ul>
@@ -961,6 +1004,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         </div>
       </div>
       <p class="lb-cfg" id="lbCfg" hidden></p>
+      <label class="lb-pub" id="lbPubRow" hidden><input type="checkbox" id="lbPub"> Sala pública: sale en «Partida rápida» y cualquiera puede entrar</label>
       <div class="lb-seats" id="lbSeats"></div>
       <div class="lb-tourn" id="lbTn" hidden></div>
       <div class="go">
@@ -1126,6 +1170,7 @@ table.st td.top { font-weight: 700; color: var(--ink); background: color-mix(in 
         <button type="button" class="btn" id="btnAgain">Revancha</button>
         <button type="button" class="btn ghost" id="btnLobby" hidden>Volver a la sala</button>
         <button type="button" class="btn ghost" id="btnEndRp" hidden>Repetición</button>
+        <button type="button" class="btn ghost" id="btnAskRv" hidden>Pedir revancha</button>
         <button type="button" class="btn ghost" id="btnMenu">Menú</button>
       </div>
     </div>
@@ -2467,6 +2512,9 @@ if (typeof module !== 'undefined') module.exports = VB;
   const any = list => list.some(c => keys.has(c) || tapped.has(c));
   addEventListener('keydown', e => {
     if (cap) return;
+    const tg = e.target && e.target.tagName;
+    if (tg === 'INPUT' || tg === 'TEXTAREA' || tg === 'SELECT') { if (e.target.id === 'chatIn') chatKey(e); return; } // escribiendo: el juego no se entera
+    if (onlineKeys(e)) return;
     if (e.code === 'Escape' || (e.code === 'KeyP' && scene === 'play' && !GAME_KEYS.has('KeyP'))) {
       if (scene === 'play' && game.state !== 'over' && performance.now() - unlockT > 400) { setPaused(!paused); e.preventDefault(); }
       return;
@@ -3726,6 +3774,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       over.push(() => {
       if (lab) text(lab, p.x, top, `700 14px ${FL}`, PAPER, TEAM[p.team].d, 4);
       if (ready) { ctx.fillStyle = SUN; ctx.strokeStyle = INK; ctx.lineWidth = 2; star(p.x + (lab ? 22 : 0), top - 1, 6); }
+      if (p._emo && clock - p._emo.t < 2.6) drawEmo(p, top - (p === nextP ? 26 : 8));
       if (p === nextP) { // flecha que bota: «te toca»
         const ay = top - 16 + Math.sin(clock * 9) * 3;
         ctx.fillStyle = TEAM[p.team].l; ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
@@ -5230,7 +5279,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       : c === 'blocked' ? 'La sala existe, pero esta red no deja conectar con ella. Prueba con otra red (wifi o datos móviles).'
       : 'No he podido conectar con la sala. Prueba otra vez.';
   }
-  const VERSION = 59; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
+  const VERSION = 60; // se enseña en la pestaña Online: todos los de una sala deben ver la misma
   async function netInit() {
     $('#olVer').textContent = 'v' + VERSION;
     const inClaude = !!(window.claude && window.claude.use);
@@ -5287,8 +5336,8 @@ if (typeof module !== 'undefined') module.exports = VB;
       props: [], abs: [], head: null, seenAb: {}, seenPl: {}, myIdx: -1, myChar: cfg.slots[0].char, rtt: 0, echo: -1, lost: 0, stale: 0, lastPr: null,
       hostSeat: 0, hostIdx: 0, seenMv: {}, mvSeq: 0, base: 'rv-' + code, gen: 1, hb: 0, hbT: 0, hbSeen: null, hbIdle: 0, court: role === 'h' ? prof.court : '', handover: null });
     net.unsub = sala.onPeers(() => {}, roomError); hookStream(sala);
-    sala.presence({ v: 2, ver: VERSION, fid: prof.fid || '', role, gen: 1, nick: cfg.nick, char: net.myChar, kit: prof.kit, tr: prof.eq.trail, cb: prof.eq.celeb, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null }).catch(() => {});
-    bgTicker(document.hidden);
+    sala.presence({ v: 2, ver: VERSION, fid: prof.fid || '', role, gen: 1, nick: cfg.nick, char: net.myChar, kit: prof.kit, tr: prof.eq.trail, cb: prof.eq.celeb, pl: {}, h: [], ab: [], ld: '', pt: 0, mv: null, rk: prof.rk || 1000, lv: lvlOf(prof.xp).l }).catch(() => {});
+    chatReset(); bgTicker(document.hidden);
     endTut(); scene = 'lobby'; paused = false;
     $('#menu').hidden = true; $('#end').hidden = true; $('#pause').hidden = true; $('#lobby').hidden = false; hud.hidden = true;
     segPaints.forEach(f => f()); renderLobby();
@@ -5297,7 +5346,9 @@ if (typeof module !== 'undefined') module.exports = VB;
     const sala = net.sala;
     if (net.unsub) { try { net.unsub(); } catch (e) { /* */ } }
     hookStream(null);
-    Object.assign(net, { sala: null, unsub: null, role: '', phase: '', code: '', view: null, handover: null, reconnect: null, court: '', tourn: null, tnSeats: null });
+    if (net.pub) pubGone();
+    Object.assign(net, { sala: null, unsub: null, role: '', phase: '', code: '', view: null, handover: null, reconnect: null, court: '', tourn: null, tnSeats: null, pub: false });
+    chatReset();
     bgTicker(false);
     if (sala) sala.leave().catch(() => {});
     $('#lobby').hidden = true;
@@ -5792,7 +5843,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     };
     return JSON.stringify(o, null, 1);
   }
-  function netTick(dt) { if (net.role === 'h') hostTick(dt); else if (net.role === 'g') guestTick(dt); }
+  function netTick(dt) { if (net.role === 'h') hostTick(dt); else if (net.role === 'g') guestTick(dt); if (net.sala) onlineTick(dt); }
   function netSync() { netIn(); if (net.role === 'h') hostSync(); }
   // Después de cada paso: lo mío sale ya si ha pasado algo (golpe, habilidad, cambio de jugada) y, si no, a ritmo fijo
   function netPublish(dt) {
@@ -5828,6 +5879,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const host = net.role === 'h', v = host ? { cfg: netCfg(), seats: seatsInfo(), n: net.sala.peers().length } : net.view;
     $('#lbCode').textContent = net.code.toUpperCase();
     $('#lbRules').hidden = !host; $('#lbCfg').hidden = host; $('#lbStart').hidden = !host; $('#lbTourn').hidden = !host;
+    $('#lbPubRow').hidden = !(host && net.direct); $('#lbPub').checked = !!net.pub;
     const TT = host ? net.tourn : v && tnUnpack(v.tn);
     renderLobbyTourn(TT);
     $('#lbSeats').hidden = !!TT && TT.champ < 0; $('#lbRules').hidden = !host || (!!TT && TT.champ < 0);
@@ -5854,6 +5906,7 @@ if (typeof module !== 'undefined') module.exports = VB;
       const who = document.createElement('div'); who.className = 'seat-who';
       const nm = document.createElement('strong'); nm.textContent = s.peer ? (cleanNick(s.nick) || 'Invitado') : 'Bot';
       const sm = document.createElement('small'); sm.textContent = 'Equipo ' + TEAM[team].name + (isMe ? ' · tú' : s.host ? ' · anfitrión' : !s.peer ? ' · hueco libre' : '');
+      if (s.peer) { const pi = peerInfo(s.peer, isMe); if (pi) { const tag = document.createElement('span'); tag.className = 'seat-rk'; tag.textContent = pi; nm.append(' ', tag); } }
       who.append(nm, sm);
       const pick = document.createElement('div'); pick.className = 'pick';
       const h3 = document.createElement('h3'); h3.textContent = ch.name;
@@ -5976,7 +6029,7 @@ if (typeof module !== 'undefined') module.exports = VB;
   ];
   let prof = null, run = null, lastCup = null;
   const blankProf = () => ({ xp: 0, played: 0, won: 0, streak: 0, best: 0, aces: 0, spikes: 0, cups: 0, survBest: 0, chars: {}, court: 'pabellon', kit: 'clasica', cup: 0, daily: null, train: {}, fid: '', friends: [], unl: [],
-    name: '', coins: 0, own: [], eq: { ball: 'clasico', trail: 'nada', celeb: 'normal' }, st: blankSt(), hist: [], career: null, tourn: null, tcups: 0 });
+    name: '', coins: 0, own: [], eq: { ball: 'clasico', trail: 'nada', celeb: 'normal' }, st: blankSt(), hist: [], career: null, tourn: null, tcups: 0, rk: 1000, rkN: 0, rkBest: 1000 });
   const needXp = l => 200 + 100 * (l - 1) + 10 * (l - 1) * (l - 1); // cada nivel cuesta bastante más que el anterior
   function lvlOf(xp) { let l = 1; while (xp >= needXp(l)) { xp -= needXp(l); l++; } return { l, into: xp, need: needXp(l) }; }
   const isOpen = it => !!it && (it.shop ? prof.own.includes('kit:' + it.id) : it.cup ? prof.cups > 0 : lvlOf(prof.xp).l >= it.lvl);
@@ -6208,6 +6261,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     renderEndProg(runEnd(g));
     $('#btnAgain').textContent = sv ? 'Otra vez' : g._mode === 'career' ? 'Ver la liga' : g._mode === 'tourn' ? 'Ver el cuadro' : cupWas == null ? 'Revancha' : prof.cup === 0 ? 'Empezar otra copa' : 'Siguiente ronda';
     $('#btnEndRp').hidden = !replayHas();
+    { const ask = $('#btnAskRv'); ask.hidden = net.role !== 'g' || !!(net.view && net.view.tn); ask.disabled = false; ask.textContent = 'Pedir revancha'; $('#btnAgain').classList.remove('pulse'); }
     setTimeout(() => {
       if (scene !== 'play' || game !== g) return;
       if (seriesOn() && !sv) { // el invitado ya tiene la serie que manda el anfitrión
@@ -6644,6 +6698,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     prof.name = cleanNick(o.name);
     prof.coins = num0(o.coins, 1e7);
     prof.tcups = num0(o.tcups, 9999);
+    prof.rk = num0(o.rk, 9999) || 1000; prof.rkN = num0(o.rkN); prof.rkBest = num0(o.rkBest, 9999) || 1000;
     if (Array.isArray(o.own)) prof.own = [...new Set(o.own.filter(x => typeof x === 'string' && /^(kit|ball|trail|celeb):[a-z]{2,16}$/.test(x)))];
     if (o.eq && typeof o.eq === 'object') for (const k of ['ball', 'trail', 'celeb']) { const id = validCos(k, o.eq[k]); prof.eq[k] = owns(k, id) ? id : COS_DEF[k]; }
     if (o.st && typeof o.st === 'object') {
@@ -6668,6 +6723,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     prof.hist.length = Math.min(prof.hist.length, 30);
   }
   function modeEnd(g, r, won, my, their) {
+    const rk = rankEnd(g, r, won); if (rk) return { xp: 0, coins: 0, lines: [rk] };
     if (g._mode === 'career') return careerResult(g, won, my, their);
     if (g._mode === 'tourn') return tournReward(g, won);
     return { xp: 0, coins: 0, lines: [] };
@@ -6704,7 +6760,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     // Estadísticas: lo principal
     const st = prof.st, grid = $('#stGrid'); grid.replaceChildren();
     const pct = prof.played ? Math.round(100 * prof.won / prof.played) : 0;
-    for (const [n, v] of [['Partidos', prof.played], ['Victorias', pct + ' %'], ['Remates', prof.spikes], ['Saques directos', prof.aces], ['Bloqueos', st.blocks], ['Mejor peloteo', st.bestRally]]) {
+    for (const [n, v] of [['Partidos', prof.played], ['Victorias', pct + ' %'], ['Remates', prof.spikes], ['Saques directos', prof.aces], ['Bloqueos', st.blocks], ['Ranking online', prof.rk || 1000]]) {
       const d = document.createElement('div'), b = document.createElement('b'), s = document.createElement('span'); b.textContent = String(v); s.textContent = n; d.append(b, s); grid.append(d);
     }
     $('#stSmall').textContent = st.secs ? Math.round(st.secs / 60) + ' min jugados' : '';
@@ -6724,6 +6780,7 @@ if (typeof module !== 'undefined') module.exports = VB;
     const pct = (w, p) => (p ? Math.round(100 * w / p) + ' %' : '—');
     sec('Total', [['Partidos', prof.played], ['Victorias', prof.won + ' (' + pct(prof.won, prof.played) + ')'], ['Racha actual', prof.streak], ['Mejor racha', prof.best],
       ['Puntos a favor', st.pts], ['Puntos en contra', st.ptsC], ['Tiempo jugado', Math.round(st.secs / 60) + ' min'], ['Monedas', prof.coins]]);
+    sec('Online', [['Ranking (1 contra 1)', prof.rk || 1000], ['Mejor ranking', prof.rkBest || 1000], ['Partidos de ranking', prof.rkN || 0]]);
     sec('Juego', [['Remates', prof.spikes], ['Saques directos', prof.aces], ['Bloqueos', st.blocks], ['Planchas', st.digs], ['Colocaciones', st.sets], ['Recepciones', st.bumps], ['Faltas', st.faults], ['Habilidades usadas', st.abil], ['Mejor peloteo', st.bestRally + ' toques']]);
     sec('Por modo', Object.keys(MODE_NAMES).filter(k => st.modes[k]).map(k => [MODE_NAMES[k], st.modes[k].p + ' jugados · ' + (k === 'superv' ? 'récord ' + prof.survBest : st.modes[k].w + ' ganados')]).concat(prof.career ? [['Títulos de liga', prof.career.titles || 0]] : []).concat(prof.tcups ? [['Torneos ganados', prof.tcups]] : []));
     const chs = CHARS.filter(c => prof.chars[c.id]).sort((a, b) => prof.chars[b.id].p - prof.chars[a.id].p);
@@ -7315,6 +7372,201 @@ if (typeof module !== 'undefined') module.exports = VB;
     addEventListener('appinstalled', () => { $('#btnInstall').hidden = true; instEv = null; toast('Instalado: ya lo tienes como programa. Se actualiza solo.'); });
     $('#btnInstall').addEventListener('click', async () => { if (!instEv) return; instEv.prompt(); try { await instEv.userChoice; } catch (er) { /* */ } instEv = null; $('#btnInstall').hidden = true; });
     stage.addEventListener('pointerdown', () => { if (RP.on) replayStop(); });
+    initOnline();
+  }
+
+  /* ===================== Online para PC: chat, reacciones, salas públicas, ranking, revancha ===================== */
+  // Chat y reacciones viajan en la presencia de cada uno (los últimos mensajes con número), así valen igual en la sala de Claude
+  // y en la conexión directa, y no tocan los mensajes del partido.
+  const EMOS = ['¡Buena!', '¡Uff!', '¡Vamos!', 'Jajaja', '¡Perdón!', 'GG'];
+  const CHAT = { seq: 0, mine: [], seen: {}, lines: [], last: 0, eseq: 0, eseen: {}, open: false };
+  function chatReset() { CHAT.mine = []; CHAT.seen = {}; CHAT.eseen = {}; CHAT.lines = []; CHAT.open = false; const l = $('#chatLog'); if (l) l.replaceChildren(); chatUi(); }
+  const cleanMsg = t => String(t == null ? '' : t).replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  function chatShow(nick, text, team, emo) {
+    const li = document.createElement('li'); if (emo) li.className = 'emo';
+    const b = document.createElement('b'); b.textContent = nick + ': '; if (team === 0 || team === 1) b.style.color = TEAM[team].l;
+    li.append(b, document.createTextNode(text)); li._t = performance.now();
+    const log = $('#chatLog'); log.append(li); while (log.children.length > 7) log.firstElementChild.remove();
+    if (!emo && document.hidden === false && ac && cfg.sound) tone(880, 990, 0.06, 'sine', 0.08);
+    chatUi();
+  }
+  function chatSend(text) {
+    text = cleanMsg(text); if (!text || !net.sala) return;
+    const now = performance.now(); if (now - CHAT.last < 700) return; CHAT.last = now;
+    CHAT.mine.push([++CHAT.seq, text]); if (CHAT.mine.length > 4) CHAT.mine.shift();
+    net.sala.presence({ cm: CHAT.mine.slice() }).catch(() => {});
+    chatShow(cfg.nick, text, myTeam());
+  }
+  function emoSend(k) {
+    if (!net.sala || !EMOS[k]) return;
+    const now = performance.now(); if (now - CHAT.last < 500) return; CHAT.last = now;
+    net.sala.presence({ em: [++CHAT.eseq, k] }).catch(() => {});
+    emoShow(myPeer(), k, cfg.nick);
+  }
+  const myTeam = () => { if (scene !== 'play' || !game || !game.players) return -1; const p = game.players.find(q => !q.remote && !q.isBot) || game.players.find(q => !q.remote && q._auto); return p ? p.team : -1; };
+  function playerOfPeer(id) {
+    if (!game || !game.players || scene !== 'play') return null;
+    if (id === myPeer()) return game.players.find(q => !q.remote && (!q.isBot || q._auto)) || null;
+    const i = (net.ctrl || []).indexOf(id); if (i >= 0 && game.players[i]) return game.players[i];
+    if (net.role === 'g') { const hp = hostPeer(); if (hp && hp.peer === id && net.hostIdx >= 0) return null; }
+    return null;
+  }
+  function emoShow(id, k, nick) {
+    const p = playerOfPeer(id);
+    if (p) p._emo = { txt: EMOS[k], t: clock };
+    chatShow(nick, EMOS[k], p ? p.team : -1, true);
+  }
+  function drawEmo(p, y) {
+    const a = clock - p._emo.t, k = a < 0.15 ? a / 0.15 : a > 2.2 ? (2.6 - a) / 0.4 : 1, t = p._emo.txt;
+    ctx.save(); ctx.globalAlpha = clamp(k, 0, 1); ctx.translate(p.x, y - 18); ctx.scale(0.8 + 0.2 * clamp(k, 0, 1), 0.8 + 0.2 * clamp(k, 0, 1));
+    ctx.font = `700 16px ${FL}`; const w = ctx.measureText(t).width + 18;
+    ctx.fillStyle = PAPER; ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(-w / 2, -14, w, 26, 9); ctx.moveTo(-6, 12); ctx.lineTo(0, 20); ctx.lineTo(6, 12); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = PAPER; ctx.fillRect(-5, 10, 10, 3);
+    text(t, 0, -1, `700 16px ${FL}`, INK);
+    ctx.restore();
+  }
+  // Mensajes y reacciones nuevos de los demás (y los avisos de revancha para el anfitrión)
+  function onlineTick(dt) {
+    if ((CHAT.pt = (CHAT.pt || 0) - dt) > 0) return; CHAT.pt = 0.15;
+    for (const p of net.sala.peers()) {
+      if (p.sameTab || !p.presence) continue;
+      const pr = p.presence, nick = cleanNick(pr.nick) || 'Invitado';
+      const cm = Array.isArray(pr.cm) ? pr.cm : [], em = Array.isArray(pr.em) ? pr.em : [0, 0];
+      if (CHAT.seen[p.peer] == null) { CHAT.seen[p.peer] = Math.max(0, ...cm.map(m => (Array.isArray(m) ? m[0] | 0 : 0))); CHAT.eseen[p.peer] = em[0] | 0; } // lo de antes de llegar yo no se repite
+      let top = CHAT.seen[p.peer];
+      for (const m of cm) if (Array.isArray(m) && m[0] > top) { chatShow(nick, cleanMsg(m[1]), (playerOfPeer(p.peer) || {}).team); top = m[0] | 0; }
+      CHAT.seen[p.peer] = top;
+      if (em[0] > CHAT.eseen[p.peer]) { emoShow(p.peer, em[1] | 0, nick); CHAT.eseen[p.peer] = em[0] | 0; }
+      if (net.role === 'h' && pr.rv === net.mid && net.mid && !(CHAT.rvSeen || (CHAT.rvSeen = {}))[p.peer + ':' + net.mid]) {
+        CHAT.rvSeen[p.peer + ':' + net.mid] = 1;
+        chatShow(nick, 'quiere la revancha', -1, true);
+        if (!$('#end').hidden) { $('#endNote').textContent = nick + ' quiere la revancha. ' + $('#endNote').textContent; $('#btnAgain').classList.add('pulse'); }
+      }
+    }
+    if (net.role === 'h') pubTick(0.15);
+    chatUi();
+  }
+  // Se ve en la sala (con la caja de escribir siempre puesta) y en el partido online (los mensajes se van borrando)
+  function chatUi() {
+    const box = $('#chatBox'); if (!box) return;
+    const on = !!net.sala && (scene === 'lobby' || scene === 'play');
+    box.hidden = !on; box.classList.toggle('lobby', scene === 'lobby'); $('#btnEmo').hidden = !(on && scene === 'play');
+    if (!on) return;
+    const now = performance.now();
+    for (const li of $('#chatLog').children) li.classList.toggle('old', scene === 'play' && !CHAT.open && now - li._t > 9000);
+    const inp = $('#chatIn'), show = scene === 'lobby' || CHAT.open;
+    if (inp.hidden === show) inp.hidden = !show;
+  }
+  function chatOpen() { if (!net.sala) return; CHAT.open = true; chatUi(); const i = $('#chatIn'); i.focus(); keys.clear(); }
+  function chatClose() { CHAT.open = false; $('#chatIn').blur(); chatUi(); }
+  function chatKey(e) {
+    if (e.key === 'Enter') { chatSend($('#chatIn').value); $('#chatIn').value = ''; if (scene === 'play') chatClose(); e.preventDefault(); }
+    else if (e.key === 'Escape') { $('#chatIn').value = ''; chatClose(); e.preventDefault(); }
+  }
+  // Teclas del online: Intro abre el chat; 1–6 reacciones; F pantalla completa (si no están ya en los controles)
+  function onlineKeys(e) {
+    if (e.repeat) return false;
+    if (e.code === 'KeyF' && !GAME_KEYS.has('KeyF') && (scene === 'play' || scene === 'lobby' || scene === 'menu') && !e.ctrlKey && !e.metaKey) { toggleFull(); e.preventDefault(); return true; }
+    if (!net.sala) return false;
+    if ((e.code === 'Enter' || e.code === 'NumpadEnter') && (scene === 'play' || scene === 'lobby') && !GAME_KEYS.has(e.code) && !paused) { chatOpen(); e.preventDefault(); return true; }
+    const m = /^Digit([1-6])$/.exec(e.code);
+    if (m && scene === 'play' && !GAME_KEYS.has(e.code)) { emoSend(+m[1] - 1); e.preventDefault(); return true; }
+    return false;
+  }
+  function toggleFull() {
+    try { if (document.fullscreenElement) document.exitFullscreen(); else (document.documentElement.requestFullscreen || (() => Promise.reject()))().catch(() => toast('Este navegador no deja poner la pantalla completa aquí.')); } catch (er) { /* */ }
+  }
+  function renderEmoMenu() {
+    const m = $('#emoMenu'); m.replaceChildren();
+    EMOS.forEach((t, k) => { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = '<kbd>' + (k + 1) + '</kbd>'; b.append(t); b.addEventListener('click', () => { emoSend(k); m.hidden = true; }); m.append(b); });
+    const w = document.createElement('button'); w.type = 'button'; w.textContent = 'Escribir…'; w.addEventListener('click', () => { m.hidden = true; chatOpen(); }); m.append(w);
+  }
+
+  // Nivel y ranking de cada uno, para la sala
+  function peerInfo(id, isMe) {
+    let pr = null;
+    if (isMe) pr = { lv: lvlOf(prof.xp).l, rk: prof.rk || 1000 };
+    else { const p = net.sala && net.sala.peers().find(q => q.peer === id); pr = p && p.presence; if (!pr && net.role === 'g') { const hp = hostPeer(); if (hp && (id === hp.peer || id === 'h')) pr = hp.presence; } }
+    if (!pr) return '';
+    const lv = num0(pr.lv, 999), rk = num0(pr.rk, 9999);
+    return (lv ? 'nv ' + lv : '') + (rk ? ' · ' + rk + ' pts' : '');
+  }
+  // Ranking (Elo) de los partidos online 1 contra 1 contra otra persona: cada uno calcula el suyo con el del rival
+  function rankEnd(g, r, won) {
+    if (r.k !== 'online' || g.cfg.mode !== 1) return null;
+    const me = g.players[[...r.mine][0]], opp = g.players.find(p => p.team !== r.team);
+    if (!opp || !opp.remote || opp.isBot) return null;
+    const id = (net.ctrl || [])[opp.i], p = id && net.sala && net.sala.peers().find(q => q.peer === id);
+    let ro = p && p.presence && num0(p.presence.rk, 9999);
+    if (!ro && net.role === 'g') { const hp = hostPeer(); ro = hp && hp.presence && num0(hp.presence.rk, 9999); }
+    if (!ro || !me) return null;
+    const mine = prof.rk || 1000, E = 1 / (1 + Math.pow(10, (ro - mine) / 400)), d = Math.round(28 * ((won ? 1 : 0) - E));
+    prof.rk = Math.max(100, mine + d); prof.rkN = (prof.rkN || 0) + 1; prof.rkBest = Math.max(prof.rkBest || 1000, prof.rk);
+    if (net.sala) net.sala.presence({ rk: prof.rk }).catch(() => {});
+    return { t: 'Ranking online: ' + mine + ' → ' + prof.rk + ' (' + (d >= 0 ? '+' : '') + d + ')', up: d > 0 };
+  }
+
+  // Salas públicas (solo con la conexión directa, fuera de Claude): el anfitrión las anuncia por los servidores de mensajes
+  const PUB = { links: [], rooms: new Map(), t: 0, want: false };
+  const PUB_TOPIC = () => 'remate-volley/salas/v' + VERSION;
+  function pubLinks() {
+    if (PUB.links.length || typeof WebSocket !== 'function' || !net.direct) return;
+    PUB.links = RELAYS.slice(0, 2).map(u => mqttLink(u, PUB_TOPIC(), (link, m) => {
+      if (!m || typeof m.code !== 'string' || !/^[a-z]{4}$/.test(m.code)) return;
+      if (m.gone) { PUB.rooms.delete(m.code); renderPub(); return; }
+      PUB.rooms.set(m.code, { code: m.code, nick: cleanNick(m.nick) || 'Anfitrión', n: clamp(m.n | 0, 1, 8), max: m.max === 4 ? 4 : 2, ph: m.ph === 'play' ? 'play' : 'lobby', tn: !!m.tn, at: performance.now() });
+      renderPub();
+    }));
+  }
+  function pubAnnounce(gone) {
+    if (!net.pub || !net.sala) return;
+    const humans = 1 + net.sala.peers().filter(p => !p.sameTab && p.presence && p.presence.role === 'g').length;
+    const m = gone ? { code: net.code, gone: 1 } : { code: net.code, nick: cfg.nick, n: humans, max: cfg.mode === 2 ? 4 : 2, ph: net.phase, tn: !!net.tourn };
+    for (const l of PUB.links) l.pub(m);
+  }
+  function pubTick(dt) { if (!net.pub) return; if ((PUB.t -= dt) <= 0) { PUB.t = 4; pubAnnounce(false); } }
+  function pubGone() { pubAnnounce(true); }
+  function renderPub() {
+    const box = $('#pubBox'); if (!box) return;
+    box.hidden = !net.direct; if (!net.direct) return;
+    const now = performance.now(), ul = $('#pubList'); ul.replaceChildren();
+    for (const [k, r] of PUB.rooms) if (now - r.at > 13000) PUB.rooms.delete(k);
+    const list = [...PUB.rooms.values()].filter(r => r.code !== net.code).sort((a, b) => (a.ph === 'lobby') - (b.ph === 'lobby') || a.n - b.n).reverse();
+    if (!list.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = PUB.links.some(l => l.ok) ? 'Ahora mismo no hay ninguna sala abierta.' : 'Buscando salas…'; ul.append(li); }
+    for (const r of list) {
+      const li = document.createElement('li'), t = document.createElement('span'), b = document.createElement('button');
+      const full = r.n >= r.max;
+      t.textContent = 'Sala de ' + r.nick + ' · ' + (r.max === 4 ? '2 contra 2' : '1 contra 1') + (r.tn ? ' · torneo' : '') + ' · ' + r.n + '/' + r.max + (r.ph === 'play' ? ' · jugando' : ' · esperando');
+      b.type = 'button'; b.className = 'btn sm ghost'; b.textContent = full || r.ph === 'play' ? 'Mirar' : 'Entrar';
+      b.addEventListener('click', () => { if (net.sala) return; $('#code').value = r.code.toUpperCase(); netJoin(); });
+      li.append(t, b); ul.append(li);
+    }
+  }
+  async function quickMatch() {
+    if (net.sala || net.busy || !net.direct) return;
+    pubLinks(); $('#btnQuick').disabled = true; netStatus('Buscando una sala abierta…');
+    const t0 = performance.now();
+    while (performance.now() - t0 < 4500) { // da tiempo a oír los anuncios
+      const r = [...PUB.rooms.values()].find(x => x.ph === 'lobby' && x.n < x.max && performance.now() - x.at < 9000);
+      if (r) { $('#btnQuick').disabled = false; $('#code').value = r.code.toUpperCase(); await netJoin(); if (net.sala) return; PUB.rooms.delete(r.code); }
+      await new Promise(res => setTimeout(res, 400));
+    }
+    $('#btnQuick').disabled = false;
+    await netCreate();
+    if (net.sala && net.role === 'h') { net.pub = true; $('#lbPub').checked = true; PUB.t = 0; toast('No había salas libres: he creado una pública. En cuanto entre alguien, empezad.'); renderLobby(); }
+  }
+  function initOnline() {
+    renderEmoMenu();
+    $('#btnEmo').addEventListener('click', e => { e.stopPropagation(); const m = $('#emoMenu'); m.hidden = !m.hidden; });
+    $('#btnFull').addEventListener('click', e => { e.stopPropagation(); toggleFull(); });
+    $('#chatIn').addEventListener('blur', () => { if (scene === 'play') setTimeout(() => { CHAT.open = false; chatUi(); }, 50); });
+    $('#btnQuick').addEventListener('click', quickMatch);
+    $('#lbPub').addEventListener('change', e => { net.pub = !!e.target.checked; PUB.t = 0; if (net.pub) pubLinks(); else pubGone(); });
+    $('#btnAskRv').addEventListener('click', () => { if (!net.sala) return; net.sala.presence({ rv: net.mid }).catch(() => {}); $('#btnAskRv').disabled = true; $('#btnAskRv').textContent = 'Revancha pedida'; });
+    $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b && b.dataset.tab === 'online' && net.direct) { pubLinks(); renderPub(); } });
+    setInterval(() => { if (!$('#pubBox').hidden && !$('#tab-online').hidden) renderPub(); chatUi(); }, 2000);
+    document.addEventListener('fullscreenchange', () => setTimeout(resize, 60));
   }
   const hot = window.claude && window.claude.hot;
   if (hot && hot.snapshot) hot.snapshot(() => ({ cfg }));

@@ -1,6 +1,6 @@
 // Remate Volley instalado (PC o móvil): al abrirlo se carga siempre la última versión publicada;
 // sin conexión se usa la última que se guardó. Solo guarda el juego, sus letras y la librería de red.
-const CACHE = 'rv-59';
+const CACHE = 'rv-60';
 const CORE = ['./', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
